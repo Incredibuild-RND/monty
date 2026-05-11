@@ -76,6 +76,14 @@ jobs:
       # (separate) still accelerates compile.
       CARGO_HOME: ${{ github.workspace }}/.cargo
       CARGO_TARGET_DIR: ${{ github.workspace }}/target
+      # The IB runner's default locale is C/POSIX. CPython then picks
+      # the ASCII codec as the default text I/O encoding, which makes
+      # monty-datatest's CPython-comparison test_cases fail when
+      # opening files with non-ASCII content (e.g. mount_fs__*.py
+      # writes UTF-8 / emoji). Force UTF-8 to match ubuntu-latest.
+      LANG: C.UTF-8
+      LC_ALL: C.UTF-8
+      PYTHONUTF8: '1'
 
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
