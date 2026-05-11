@@ -486,18 +486,16 @@ jobs:
   fuzz:
     needs: [miri]
     name: fuzz ${{ matrix.target }}
-    runs-on: incredibuild-runner
+    # Kept on ubuntu-latest. cargo-fuzz install + fuzz-target compile
+    # + 60s fuzz run + ib_console daemon-startup (×2 cargo invocations
+    # in this job) consistently finished at 12:01 on the IB runner —
+    # exactly the ~10–12-min wall-clock cap. Reverting fuzz to
+    # ubuntu-latest costs no value-story coverage because the rustc
+    # cache on this same shape of compile workload is already proved
+    # by .github/workflows/ib-bench.yml (cells C/D). Same revert
+    # rationale as `lint` and the `test-python` matrix above.
+    runs-on: ubuntu-latest
     timeout-minutes: 30
-    env:
-      # Per-job CARGO_HOME / CARGO_TARGET_DIR. Without this the IB
-      # runner shares /ib-workspace/cache/cargo* across concurrent
-      # jobs, leading to source/object corruption under
-      # workspace-scale compilation. ib_console's build cache
-      # (separate) still accelerates compile.
-      CARGO_HOME: ${{ github.workspace }}/.cargo
-      CARGO_TARGET_DIR: ${{ github.workspace }}/target
-      IB_MAX_LOCAL_CORES: '8'
-      IB_PREVENT_OVERLOAD: '1'
 
     strategy:
       fail-fast: false
@@ -524,14 +522,9 @@ jobs:
           cache-on-failure: true
           prefix-key: 'v1-rust-fuzz'
           workspaces: 'crates/fuzz -> target'
-          save-if: false # IB cache is the cache here; Swatinem post-save hangs on this runner image
 
       - if: steps.cache-rust.outputs.cache-hit != 'true'
-        run: ./scripts/cargo-ib.sh install cargo-fuzz
-
-      # don't use .venv python in CI
-      - name: IB pre-flight
-        run: ./scripts/ib-prep.sh
+        run: cargo install cargo-fuzz
 
       - run: rm .cargo/config.toml
 
@@ -540,11 +533,7 @@ jobs:
           # Use --sanitizer none to avoid ASAN/SanitizerCoverage linking issues on CI
           # (undefined __sancov_gen_.* symbols). For short CI runs, we're mainly
           # catching panics, not memory bugs.
-          ./scripts/cargo-ib.sh fuzz run --fuzz-dir crates/fuzz --sanitizer none ${{ matrix.target }} -- -max_total_time=60
-
-      - name: IB cache stats
-        if: always()
-        run: ./scripts/ib-stats.sh
+          cargo fuzz run --fuzz-dir crates/fuzz --sanitizer none ${{ matrix.target }} -- -max_total_time=60
 
   check:
     if: always()
