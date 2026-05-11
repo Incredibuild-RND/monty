@@ -44,7 +44,7 @@ jobs:
       # bad Python). Keeping CARGO_HOME under runner.temp puts
       # the cargo registry/git checkouts outside the prek scan
       # root.
-      CARGO_HOME: ${{ runner.temp }}/lint-cargo
+      CARGO_HOME: /tmp/lint-cargo
       CARGO_TARGET_DIR: ${{ github.workspace }}/target
       # Route prek's internal clippy/cargo invocations through ib_console
       # so the workspace-wide clippy lint pass benefits from the same
