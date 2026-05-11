@@ -59,9 +59,6 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: IB pre-flight
-        run: ./scripts/ib-prep.sh
-
       # no release versioning, see https://github.com/dtolnay/rust-toolchain/issues/180
       - uses: dtolnay/rust-toolchain@efa25f7f19611383d5b0ccf2d1c8914531636bf9
         with:
@@ -74,7 +71,7 @@ jobs:
           cache-on-failure: true
           prefix-key: 'v1-rust'
 
-          save-if: ${{ false }} # IB cache is the cache here; Swatinem post-save hangs on this runner image
+          save-if: false # IB cache is the cache here; Swatinem post-save hangs on this runner image
       - uses: astral-sh/setup-uv@cec208311dfd045dd5311c1add060b2062131d57 # v8.0.0
         with:
           enable-cache: true # zizmor: ignore[cache-poisoning] -- Job does not produce release artifacts and does not have sensitive permissions
@@ -91,6 +88,9 @@ jobs:
       - name: Install node dependencies
         run: npm install
         working-directory: crates/monty-js
+
+      - name: IB pre-flight
+        run: ./scripts/ib-prep.sh
 
       - name: Run prek
         uses: j178/prek-action@cbc2f23eb5539cf20d82d1aabd0d0ecbcc56f4e3 # v2.2
@@ -126,9 +126,6 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: IB pre-flight
-        run: ./scripts/ib-prep.sh
-
       # no release versioning, see https://github.com/dtolnay/rust-toolchain/issues/180
       - uses: dtolnay/rust-toolchain@efa25f7f19611383d5b0ccf2d1c8914531636bf9
         with:
@@ -139,7 +136,7 @@ jobs:
         with:
           lookup-only: false # zizmor: ignore[cache-poisoning] -- Job does not produce release artifacts and does not have sensitive permissions
           cache-on-failure: true
-          save-if: ${{ false }} # IB cache is the cache here; Swatinem post-save hangs on this runner image
+          save-if: false # IB cache is the cache here; Swatinem post-save hangs on this runner image
       - uses: taiki-e/install-action@1ed3272338f573e042a2e6bca3893aa19f43b47a # v2.71.3
         with:
           tool: cargo-llvm-cov
@@ -149,6 +146,9 @@ jobs:
         uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
         with:
           python-version: '3.14'
+
+      - name: IB pre-flight
+        run: ./scripts/ib-prep.sh
 
       - run: rustc --version --verbose
       - run: python3 -V
@@ -199,9 +199,6 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: IB pre-flight
-        run: ./scripts/ib-prep.sh
-
       # no release versioning, see https://github.com/dtolnay/rust-toolchain/issues/180
       - uses: dtolnay/rust-toolchain@efa25f7f19611383d5b0ccf2d1c8914531636bf9
         with:
@@ -212,7 +209,7 @@ jobs:
         with:
           lookup-only: false # zizmor: ignore[cache-poisoning] -- Job does not produce release artifacts and does not have sensitive permissions
           cache-on-failure: true
-          save-if: ${{ false }} # IB cache is the cache here; Swatinem post-save hangs on this runner image
+          save-if: false # IB cache is the cache here; Swatinem post-save hangs on this runner image
       - uses: taiki-e/install-action@1ed3272338f573e042a2e6bca3893aa19f43b47a # v2.71.3
         with:
           tool: cargo-llvm-cov
@@ -225,6 +222,9 @@ jobs:
       - uses: astral-sh/setup-uv@cec208311dfd045dd5311c1add060b2062131d57 # v8.0.0
         with:
           enable-cache: true # zizmor: ignore[cache-poisoning] -- Job does not produce release artifacts and does not have sensitive permissions
+
+      - name: IB pre-flight
+        run: ./scripts/ib-prep.sh
 
       - run: rustc --version --verbose
       - run: python3 -V
@@ -327,9 +327,6 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: IB pre-flight
-        run: ./scripts/ib-prep.sh
-
       # no release versioning, see https://github.com/dtolnay/rust-toolchain/issues/180
       - uses: dtolnay/rust-toolchain@efa25f7f19611383d5b0ccf2d1c8914531636bf9
         with:
@@ -339,7 +336,7 @@ jobs:
         with:
           lookup-only: false # zizmor: ignore[cache-poisoning] -- Job does not produce release artifacts and does not have sensitive permissions
           cache-on-failure: true
-          save-if: ${{ false }} # IB cache is the cache here; Swatinem post-save hangs on this runner image
+          save-if: false # IB cache is the cache here; Swatinem post-save hangs on this runner image
       - uses: astral-sh/setup-uv@cec208311dfd045dd5311c1add060b2062131d57 # v8.0.0
         with:
           enable-cache: true # zizmor: ignore[cache-poisoning] -- Job does not produce release artifacts and does not have sensitive permissions
@@ -369,6 +366,9 @@ jobs:
           } >> "$GITHUB_ENV"
 
       - run: uv sync --all-packages --only-dev
+      - name: IB pre-flight
+        run: ./scripts/ib-prep.sh
+
       - run: make dev-py
       - run: make pytest
         # also test with a release build
@@ -440,9 +440,6 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: IB pre-flight
-        run: ./scripts/ib-prep.sh
-
       # no release versioning, see https://github.com/dtolnay/rust-toolchain/issues/180
       - uses: dtolnay/rust-toolchain@efa25f7f19611383d5b0ccf2d1c8914531636bf9
         with:
@@ -452,13 +449,16 @@ jobs:
         with:
           lookup-only: false # zizmor: ignore[cache-poisoning] -- Job does not produce release artifacts and does not have sensitive permissions
           cache-on-failure: true
-          save-if: ${{ false }} # IB cache is the cache here; Swatinem post-save hangs on this runner image
+          save-if: false # IB cache is the cache here; Swatinem post-save hangs on this runner image
       - name: set up python
         uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
         with:
           python-version: '3.14'
 
       # don't use .venv python in CI
+      - name: IB pre-flight
+        run: ./scripts/ib-prep.sh
+
       - run: rm .cargo/config.toml
 
       - run: ./scripts/cargo-ib.sh bench --profile dev -p monty-bench --bench main -- --test
@@ -485,9 +485,6 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: IB pre-flight
-        run: ./scripts/ib-prep.sh
-
       # no release versioning, see https://github.com/dtolnay/rust-toolchain/issues/180
       - uses: dtolnay/rust-toolchain@efa25f7f19611383d5b0ccf2d1c8914531636bf9
         with:
@@ -498,8 +495,11 @@ jobs:
         with:
           lookup-only: false # zizmor: ignore[cache-poisoning] -- Job does not produce release artifacts and does not have sensitive permissions
           cache-on-failure: true
-          save-if: ${{ false }} # IB cache is the cache here; Swatinem post-save hangs on this runner image
+          save-if: false # IB cache is the cache here; Swatinem post-save hangs on this runner image
       # don't use .venv python in CI
+      - name: IB pre-flight
+        run: ./scripts/ib-prep.sh
+
       - run: rm .cargo/config.toml
 
       - name: Run miri tests
@@ -536,9 +536,6 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: IB pre-flight
-        run: ./scripts/ib-prep.sh
-
       # no release versioning, see https://github.com/dtolnay/rust-toolchain/issues/180
       - uses: dtolnay/rust-toolchain@efa25f7f19611383d5b0ccf2d1c8914531636bf9
         with:
@@ -551,12 +548,15 @@ jobs:
           cache-on-failure: true
           prefix-key: 'v1-rust-fuzz'
           workspaces: 'crates/fuzz -> target'
-          save-if: ${{ false }} # IB cache is the cache here; Swatinem post-save hangs on this runner image
+          save-if: false # IB cache is the cache here; Swatinem post-save hangs on this runner image
 
       - if: steps.cache-rust.outputs.cache-hit != 'true'
         run: ./scripts/cargo-ib.sh install cargo-fuzz
 
       # don't use .venv python in CI
+      - name: IB pre-flight
+        run: ./scripts/ib-prep.sh
+
       - run: rm .cargo/config.toml
 
       - name: Run ${{ matrix.target }} fuzzer
