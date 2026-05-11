@@ -158,7 +158,9 @@ def main(results_dir: str) -> int:
     shas: dict[str, set[str]] = {}
     for label, _ in CELLS:
         shas[label] = {r.get('coverage_sha256', '') for r in cells.get(label, []) if r.get('coverage_sha256')}
-    all_shas = set().union(*shas.values()) if shas else set()
+    all_shas: set[str] = set()
+    for s in shas.values():
+        all_shas |= s
     lines.append('## Artifact correctness')
     lines.append('')
     if len(all_shas) <= 1 and all_shas:
