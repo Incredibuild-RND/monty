@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!--
+    Custom Incredibuild profile for monty.
+
+    The default /opt/incredibuild/data/ib_profile.xml has rustc as
+    type="allow_remote" but does NOT enable ib_cache for it. That means
+    rustc invocations get DISTRIBUTED across the IB build network but
+    their outputs are NOT persisted to the build-avoidance cache, so
+    subsequent runs re-compile the same crates from scratch — even with
+    `--build-cache-local-shared --build-cache-force` on the ib_console
+    command line.
+
+    Adding `<ib_cache enabled="true" />` opts rustc into the same
+    cache-and-replay path that gcc/clang/cc1/cc1plus already use in the
+    default profile. ib_cache (not ccache) is used because ccache
+    doesn't understand rustc's invocation/output model; ib_cache has
+    explicit rustc support, including the rustc .rsp file basedir
+    placeholder transformation (see ib_linux:cpp/BuildCache/
+    BuildCache_Rules.cpp).
+
+    This profile is passed to ib_console via `--profile=…`, which loads
+    additively on top of the system default — so we only need to
+    declare the entries we want to override.
+-->
+<ib_profile>
+    <!--
+        Cache rustc (the big win on a Rust-heavy workspace).
+        exclude_args matches the default profile so that build scripts
+        and `rustc --version` probes don't go through the cache path
+        where they wouldn't hit anyway.
+    -->
+    <process filename="rustc"
+             type="allow_remote"
+             exclude_args="--version:-vV:build_script_build:build_script_main">
+        <ib_cache enabled="true" />
+    </process>
+</ib_profile>
