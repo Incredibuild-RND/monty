@@ -92,6 +92,13 @@ jobs:
 
       - run: uv sync --all-packages --only-dev
 
+      # prek runs `make lint-rs` -> `cargo clippy`. .cargo/config.toml
+      # sets PYO3_PYTHON=.venv/bin/python3 (a local-dev convenience that
+      # doesn't reliably resolve under the IB sandbox), so remove it
+      # like the other migrated jobs do. pyo3-build-config then
+      # auto-detects the system python from setup-uv.
+      - run: rm -f .cargo/config.toml
+
       - name: Setup node
         uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0 # zizmor: ignore[cache-poisoning] -- Job does not produce release artifacts and does not have sensitive permissions
         with:
