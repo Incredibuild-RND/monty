@@ -523,7 +523,7 @@ jobs:
 
     strategy:
       fail-fast: false
-      max-parallel: 2
+      max-parallel: 1
       matrix:
         python-version: ['3.10', '3.11', '3.12', '3.13', '3.14']
 
@@ -833,6 +833,7 @@ jobs:
           done
 
   miri:
+    needs: [bench-test]
     runs-on: incredibuild-runner
     timeout-minutes: 30
     env:
@@ -929,6 +930,7 @@ jobs:
           done
 
   fuzz:
+    needs: [miri]
     name: fuzz ${{ matrix.target }}
     runs-on: incredibuild-runner
     timeout-minutes: 30
