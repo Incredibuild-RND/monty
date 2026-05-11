@@ -96,7 +96,7 @@ def main(results_dir: str) -> int:
     lines: list[str] = []
     lines.append("# IB build-runner value matrix")
     lines.append("")
-    lines.append("Same workload (`cargo llvm-cov --no-report -p monty`), 3 iterations per cell.")
+    lines.append("Same workload (`cargo test --no-run -p monty`), N iterations per cell.")
     lines.append("")
     lines.append("| cell | configuration | wall time | hits | misses | target/ size |")
     lines.append("|---|---|---|---|---|---|")
