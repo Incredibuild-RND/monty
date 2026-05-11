@@ -16,6 +16,13 @@ on:
 
 permissions: {}
 
+# Cancel in-flight runs for the same PR / branch when a new commit lands.
+# Without this, a chain of pushes leaves a stack of running jobs all
+# contending for the self-hosted IB runner.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref_name }}-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: true
+
 env:
   COLUMNS: 150
   UV_PYTHON: '3.14'
@@ -68,6 +75,7 @@ jobs:
 
   test-rust:
     runs-on: incredibuild-runner
+    timeout-minutes: 30
     env:
       # Per-job CARGO_HOME / CARGO_TARGET_DIR. Without this the IB
       # runner shares /ib-workspace/cache/cargo* across concurrent
@@ -217,6 +225,7 @@ jobs:
 
   test-python-coverage:
     runs-on: incredibuild-runner
+    timeout-minutes: 30
     env:
       CARGO_HOME: ${{ github.workspace }}/.cargo
       CARGO_TARGET_DIR: ${{ github.workspace }}/target
@@ -392,9 +401,11 @@ jobs:
   test-python:
     name: test python ${{ matrix.python-version }}
     runs-on: incredibuild-runner
+    timeout-minutes: 30
 
     strategy:
       fail-fast: false
+      max-parallel: 3
       matrix:
         python-version: ['3.10', '3.11', '3.12', '3.13', '3.14']
 
@@ -543,6 +554,7 @@ jobs:
 
   bench-test:
     runs-on: incredibuild-runner
+    timeout-minutes: 30
     env:
       # Per-job CARGO_HOME / CARGO_TARGET_DIR. Without this the IB
       # runner shares /ib-workspace/cache/cargo* across concurrent
@@ -655,6 +667,7 @@ jobs:
 
   miri:
     runs-on: incredibuild-runner
+    timeout-minutes: 30
     env:
       # Per-job CARGO_HOME / CARGO_TARGET_DIR. Without this the IB
       # runner shares /ib-workspace/cache/cargo* across concurrent
@@ -726,6 +739,7 @@ jobs:
   fuzz:
     name: fuzz ${{ matrix.target }}
     runs-on: incredibuild-runner
+    timeout-minutes: 30
     env:
       # Per-job CARGO_HOME / CARGO_TARGET_DIR. Without this the IB
       # runner shares /ib-workspace/cache/cargo* across concurrent
