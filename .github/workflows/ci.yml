@@ -106,14 +106,25 @@ jobs:
           python-version: '3.14'
 
       - name: Ensure libpython is linkable
-        # setup-python tarballs on lean self-hosted runners
-        # ship libpython3.X.so.1.0 but not the linker-discoverable
-        # libpython3.X.so symlink. pyo3-built binaries pass
-        # -lpython3.X so the linker fails without it. Recreate it.
+        # On the self-hosted IB runner setup-python installs Python under
+        # /actions-runner/_work/_tool/Python/..., but python-build-standalone
+        # tarballs bake /opt/hostedtoolcache/Python/... into their sysconfig
+        # at build time, so pyo3-ffi's build.rs emits a link search pointing
+        # to the GitHub-hosted runner path that doesn't exist here. Two
+        # things to fix:
+        #   1. Create the libpython3.X.so symlink at the real prefix (the
+        #      tarball ships only libpython3.X.so.1.0).
+        #   2. Export LIBRARY_PATH / LD_LIBRARY_PATH pointing at the real
+        #      lib dir so cc/lld fall back there regardless of stale link
+        #      search paths cached by pyo3-ffi from a prior run.
         run: |
           set -euxo pipefail
           PY_PREFIX=$(python3 -c 'import sys; print(sys.prefix)')
           PY_VER=$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')
+          SYSCONFIG_LIBDIR=$(python3 -c 'import sysconfig; print(sysconfig.get_config_var("LIBDIR") or "")')
+          echo "PY_PREFIX=$PY_PREFIX"
+          echo "PY_VER=$PY_VER"
+          echo "SYSCONFIG_LIBDIR=$SYSCONFIG_LIBDIR"
           so_link="$PY_PREFIX/lib/libpython${PY_VER}.so"
           if [ ! -e "$so_link" ]; then
             candidate=$(ls "$PY_PREFIX"/lib/libpython${PY_VER}*.so* 2>/dev/null | sort -r | head -1 || true)
@@ -127,6 +138,11 @@ jobs:
             fi
           fi
           ls -la "$so_link"
+          # cc/lld respect LIBRARY_PATH; runtime needs LD_LIBRARY_PATH
+          {
+            echo "LIBRARY_PATH=$PY_PREFIX/lib"
+            echo "LD_LIBRARY_PATH=$PY_PREFIX/lib"
+          } >> "$GITHUB_ENV"
 
       - run: rustc --version --verbose
       - run: python3 -V
@@ -369,14 +385,25 @@ jobs:
           python-version: '3.14'
 
       - name: Ensure libpython is linkable
-        # setup-python tarballs on lean self-hosted runners
-        # ship libpython3.X.so.1.0 but not the linker-discoverable
-        # libpython3.X.so symlink. pyo3-built binaries pass
-        # -lpython3.X so the linker fails without it. Recreate it.
+        # On the self-hosted IB runner setup-python installs Python under
+        # /actions-runner/_work/_tool/Python/..., but python-build-standalone
+        # tarballs bake /opt/hostedtoolcache/Python/... into their sysconfig
+        # at build time, so pyo3-ffi's build.rs emits a link search pointing
+        # to the GitHub-hosted runner path that doesn't exist here. Two
+        # things to fix:
+        #   1. Create the libpython3.X.so symlink at the real prefix (the
+        #      tarball ships only libpython3.X.so.1.0).
+        #   2. Export LIBRARY_PATH / LD_LIBRARY_PATH pointing at the real
+        #      lib dir so cc/lld fall back there regardless of stale link
+        #      search paths cached by pyo3-ffi from a prior run.
         run: |
           set -euxo pipefail
           PY_PREFIX=$(python3 -c 'import sys; print(sys.prefix)')
           PY_VER=$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')
+          SYSCONFIG_LIBDIR=$(python3 -c 'import sysconfig; print(sysconfig.get_config_var("LIBDIR") or "")')
+          echo "PY_PREFIX=$PY_PREFIX"
+          echo "PY_VER=$PY_VER"
+          echo "SYSCONFIG_LIBDIR=$SYSCONFIG_LIBDIR"
           so_link="$PY_PREFIX/lib/libpython${PY_VER}.so"
           if [ ! -e "$so_link" ]; then
             candidate=$(ls "$PY_PREFIX"/lib/libpython${PY_VER}*.so* 2>/dev/null | sort -r | head -1 || true)
@@ -390,6 +417,11 @@ jobs:
             fi
           fi
           ls -la "$so_link"
+          # cc/lld respect LIBRARY_PATH; runtime needs LD_LIBRARY_PATH
+          {
+            echo "LIBRARY_PATH=$PY_PREFIX/lib"
+            echo "LD_LIBRARY_PATH=$PY_PREFIX/lib"
+          } >> "$GITHUB_ENV"
 
       # don't use .venv python in CI
       - run: rm .cargo/config.toml
