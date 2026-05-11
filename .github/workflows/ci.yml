@@ -35,7 +35,16 @@ jobs:
     runs-on: incredibuild-runner
     timeout-minutes: 30
     env:
-      CARGO_HOME: ${{ github.workspace }}/.cargo
+      # CARGO_HOME OUTSIDE the workspace for lint. The other
+      # migrated jobs use $github.workspace/.cargo for per-job
+      # isolation, but lint runs prek which runs ruff over the
+      # workspace .py tree — which then walks into
+      # .cargo/git/checkouts/ruff-*/ and trips on ruff's own
+      # malformed test fixtures (.ipynb with bad JSON, .py with
+      # bad Python). Keeping CARGO_HOME under runner.temp puts
+      # the cargo registry/git checkouts outside the prek scan
+      # root.
+      CARGO_HOME: ${{ runner.temp }}/lint-cargo
       CARGO_TARGET_DIR: ${{ github.workspace }}/target
       # Route prek's internal clippy/cargo invocations through ib_console
       # so the workspace-wide clippy lint pass benefits from the same
