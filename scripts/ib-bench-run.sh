@@ -109,11 +109,27 @@ for i in $(seq 1 "$ITERATIONS"); do
     echo "pre: cache=${pre_cache}B hits=${pre_hits} misses=${pre_misses}"
 
     time_out=$(mktemp)
+    user="0"; sys="0"; rss="0"; wall_secs="0"
+
     set +e
-    /usr/bin/time -v -o "$time_out" \
+    if [ -x /usr/bin/time ]; then
+        # Preferred: GNU /usr/bin/time -v gives wall + user + sys + RSS.
+        /usr/bin/time -v -o "$time_out" \
+            "${CARGO_RUNNER[@]}" "${BENCH_ARGS[@]}"
+        cargo_rc=$?
+    else
+        # Fallback: date-based wall-clock when GNU time isn't available
+        # (lean self-hosted runner images that haven't been bootstrapped
+        # by ib-prep.sh yet). User/sys/rss stay zero in this branch.
+        echo "::warning::/usr/bin/time missing, using date fallback (no user/sys/rss)"
+        t0=$(date +%s.%N)
         "${CARGO_RUNNER[@]}" "${BENCH_ARGS[@]}"
-    cargo_rc=$?
+        cargo_rc=$?
+        t1=$(date +%s.%N)
+        wall_secs=$(python3 -c "print(f'{${t1}-${t0}:.3f}')")
+    fi
     set -e
+
     echo "cargo exit code: $cargo_rc"
     if [ "$cargo_rc" -ne 0 ]; then
         echo "::warning::cargo iteration $i exited $cargo_rc"
@@ -122,17 +138,12 @@ for i in $(seq 1 "$ITERATIONS"); do
         echo "--- /usr/bin/time -v output ---"
         cat "$time_out"
         echo "---"
-    else
-        echo "::warning::no /usr/bin/time output captured"
-    fi
-
-    wall=$(awk -F': ' '/Elapsed \(wall clock\) time/ {print $2}' "$time_out" 2>/dev/null | tail -1)
-    user=$(awk -F': ' '/User time \(seconds\)/ {print $2+0}' "$time_out" 2>/dev/null | tail -1)
-    sys=$(awk -F': ' '/System time \(seconds\)/ {print $2+0}' "$time_out" 2>/dev/null | tail -1)
-    rss=$(awk -F': ' '/Maximum resident set size/ {print $2+0}' "$time_out" 2>/dev/null | tail -1)
-
-    # Convert HH:MM:SS, MM:SS, SS, or SS.ss into seconds.
-    wall_secs=$(python3 - <<PY
+        wall=$(awk -F': ' '/Elapsed \(wall clock\) time/ {print $2}' "$time_out" 2>/dev/null | tail -1)
+        user=$(awk -F': ' '/User time \(seconds\)/ {print $2+0}' "$time_out" 2>/dev/null | tail -1)
+        sys=$(awk -F': ' '/System time \(seconds\)/ {print $2+0}' "$time_out" 2>/dev/null | tail -1)
+        rss=$(awk -F': ' '/Maximum resident set size/ {print $2+0}' "$time_out" 2>/dev/null | tail -1)
+        # Convert HH:MM:SS, MM:SS, SS, or SS.ss into seconds.
+        wall_secs=$(python3 - <<PY
 w = "${wall:-0}".strip()
 if not w:
     print(0); raise SystemExit
@@ -143,6 +154,7 @@ for p in parts:
 print(f"{secs:.3f}")
 PY
 )
+    fi
 
     post_cache=$(cache_size)
     post_hits=$(count_logfile HIT)

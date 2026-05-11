@@ -55,6 +55,11 @@ missing=()
 for tool in wget curl unzip; do
     command -v "$tool" >/dev/null 2>&1 || missing+=("$tool")
 done
+# `time` (GNU /usr/bin/time, not the bash builtin) is needed by the
+# ib-bench measurement script. Lean IB runner images don't ship it.
+if [ ! -x /usr/bin/time ]; then
+    missing+=(time)
+fi
 if [ "${#missing[@]}" -gt 0 ]; then
     missing+=(ca-certificates)
     apt_install "${missing[@]}"
