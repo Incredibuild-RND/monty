@@ -32,12 +32,34 @@ env:
 
 jobs:
   lint:
-    runs-on: ubuntu-latest
+    runs-on: incredibuild-runner
+    timeout-minutes: 30
+    env:
+      CARGO_HOME: ${{ github.workspace }}/.cargo
+      CARGO_TARGET_DIR: ${{ github.workspace }}/target
+      # Route prek's internal clippy/cargo invocations through ib_console
+      # so the workspace-wide clippy lint pass benefits from the same
+      # ib_cache as test-rust.
+      CARGO: ${{ github.workspace }}/scripts/cargo-ib.sh
+      LANG: C.UTF-8
+      LC_ALL: C.UTF-8
+      PYTHONUTF8: '1'
 
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
+
+      - name: Ensure baseline tools (sudo/curl/wget)
+        run: ./scripts/ensure-ci-tools.sh
+
+      - name: IB pre-flight diagnostics
+        if: always()
+        run: |
+          set +e
+          which ib_console || echo "no ib_console on PATH"
+          /usr/bin/ib_console --version 2>&1 | head -5 || true
+          ls -la scripts/ib-profile.xml || true
 
       # no release versioning, see https://github.com/dtolnay/rust-toolchain/issues/180
       - uses: dtolnay/rust-toolchain@efa25f7f19611383d5b0ccf2d1c8914531636bf9
@@ -72,6 +94,22 @@ jobs:
         uses: j178/prek-action@cbc2f23eb5539cf20d82d1aabd0d0ecbcc56f4e3 # v2.2
         env:
           SKIP: no-commit-to-branch
+
+      - name: IB cache stats
+        if: always()
+        run: |
+          set +e
+          log="${RUNNER_TEMP:-/tmp}/ib_cache.log"
+          echo "=== IB cache logfile: $log ==="
+          if [ -f "$log" ]; then
+            wc -l "$log"
+            tail -100 "$log"
+            hits=$(grep -c -iE 'cache.?hit|HIT' "$log" 2>/dev/null || echo 0)
+            misses=$(grep -c -iE 'cache.?miss|MISS' "$log" 2>/dev/null || echo 0)
+            echo "approx hits=$hits  misses=$misses"
+          else
+            echo "no cache log produced"
+          fi
 
   test-rust:
     runs-on: incredibuild-runner
