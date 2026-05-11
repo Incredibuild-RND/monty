@@ -67,13 +67,23 @@ jobs:
           SKIP: no-commit-to-branch
 
   test-rust:
-    runs-on: ubuntu-latest
+    runs-on: incredibuild-runner
+    env:
+      # Per-job CARGO_HOME / CARGO_TARGET_DIR. Without this the IB
+      # runner shares /ib-workspace/cache/cargo* across concurrent
+      # jobs, leading to source/object corruption under
+      # workspace-scale compilation. ib_console's build cache
+      # (separate) still accelerates compile.
+      CARGO_HOME: ${{ github.workspace }}/.cargo
+      CARGO_TARGET_DIR: ${{ github.workspace }}/target
 
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
 
+      - name: Ensure baseline tools (sudo/curl/wget)
+        run: ./scripts/ensure-ci-tools.sh
       # no release versioning, see https://github.com/dtolnay/rust-toolchain/issues/180
       - uses: dtolnay/rust-toolchain@efa25f7f19611383d5b0ccf2d1c8914531636bf9
         with:
@@ -99,23 +109,23 @@ jobs:
       - run: python3 -V
         # don't use .venv python in CI
       - run: rm .cargo/config.toml
-      - run: cargo llvm-cov clean --workspace
+      - run: ./scripts/cargo-ib.sh llvm-cov clean --workspace
 
       # coverage for `make test-no-features`
-      - run: cargo llvm-cov --no-report -p monty
-      - run: cargo llvm-cov run --no-report -p monty-datatest
+      - run: ./scripts/cargo-ib.sh llvm-cov --no-report -p monty
+      - run: ./scripts/cargo-ib.sh llvm-cov run --no-report -p monty-datatest
       # coverage for `make test-memory-model-checks`
-      - run: cargo llvm-cov --no-report -p monty --features memory-model-checks
-      - run: cargo llvm-cov run --no-report -p monty-datatest --features memory-model-checks
+      - run: ./scripts/cargo-ib.sh llvm-cov --no-report -p monty --features memory-model-checks
+      - run: ./scripts/cargo-ib.sh llvm-cov run --no-report -p monty-datatest --features memory-model-checks
       # coverage for `make test-ref-count-return`
-      - run: cargo llvm-cov --no-report -p monty --features ref-count-return
-      - run: cargo llvm-cov run --no-report -p monty-datatest --features ref-count-return
+      - run: ./scripts/cargo-ib.sh llvm-cov --no-report -p monty --features ref-count-return
+      - run: ./scripts/cargo-ib.sh llvm-cov run --no-report -p monty-datatest --features ref-count-return
       # coverage for `make test-type-checking`
-      - run: cargo llvm-cov --no-report -p monty_type_checking -p monty_typeshed
+      - run: ./scripts/cargo-ib.sh llvm-cov --no-report -p monty_type_checking -p monty_typeshed
       # Generating text report:
-      - run: cargo llvm-cov report --ignore-filename-regex "$LLVM_COV_IGNORE_FILENAME_REGEX"
+      - run: ./scripts/cargo-ib.sh llvm-cov report --ignore-filename-regex "$LLVM_COV_IGNORE_FILENAME_REGEX"
       # Generate codecov report (use `report` subcommand to avoid recompilation)
-      - run: cargo llvm-cov report --codecov --output-path=rust-coverage.json --ignore-filename-regex "$LLVM_COV_IGNORE_FILENAME_REGEX"
+      - run: ./scripts/cargo-ib.sh llvm-cov report --codecov --output-path=rust-coverage.json --ignore-filename-regex "$LLVM_COV_IGNORE_FILENAME_REGEX"
 
       - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
         with:
@@ -303,13 +313,23 @@ jobs:
       - run: cargo run -p monty-datatest --features memory-model-checks
 
   bench-test:
-    runs-on: ubuntu-latest
+    runs-on: incredibuild-runner
+    env:
+      # Per-job CARGO_HOME / CARGO_TARGET_DIR. Without this the IB
+      # runner shares /ib-workspace/cache/cargo* across concurrent
+      # jobs, leading to source/object corruption under
+      # workspace-scale compilation. ib_console's build cache
+      # (separate) still accelerates compile.
+      CARGO_HOME: ${{ github.workspace }}/.cargo
+      CARGO_TARGET_DIR: ${{ github.workspace }}/target
 
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
 
+      - name: Ensure baseline tools (sudo/curl/wget)
+        run: ./scripts/ensure-ci-tools.sh
       # no release versioning, see https://github.com/dtolnay/rust-toolchain/issues/180
       - uses: dtolnay/rust-toolchain@efa25f7f19611383d5b0ccf2d1c8914531636bf9
         with:
@@ -328,16 +348,26 @@ jobs:
       # don't use .venv python in CI
       - run: rm .cargo/config.toml
 
-      - run: make dev-bench
+      - run: ./scripts/cargo-ib.sh bench --profile dev -p monty-bench --bench main -- --test
 
   miri:
-    runs-on: ubuntu-latest
+    runs-on: incredibuild-runner
+    env:
+      # Per-job CARGO_HOME / CARGO_TARGET_DIR. Without this the IB
+      # runner shares /ib-workspace/cache/cargo* across concurrent
+      # jobs, leading to source/object corruption under
+      # workspace-scale compilation. ib_console's build cache
+      # (separate) still accelerates compile.
+      CARGO_HOME: ${{ github.workspace }}/.cargo
+      CARGO_TARGET_DIR: ${{ github.workspace }}/target
 
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
 
+      - name: Ensure baseline tools (sudo/curl/wget)
+        run: ./scripts/ensure-ci-tools.sh
       # no release versioning, see https://github.com/dtolnay/rust-toolchain/issues/180
       - uses: dtolnay/rust-toolchain@efa25f7f19611383d5b0ccf2d1c8914531636bf9
         with:
@@ -353,11 +383,19 @@ jobs:
       - run: rm .cargo/config.toml
 
       - name: Run miri tests
-        run: make miri
+        run: ./scripts/cargo-ib.sh +nightly miri test -p monty --lib
 
   fuzz:
     name: fuzz ${{ matrix.target }}
-    runs-on: ubuntu-latest
+    runs-on: incredibuild-runner
+    env:
+      # Per-job CARGO_HOME / CARGO_TARGET_DIR. Without this the IB
+      # runner shares /ib-workspace/cache/cargo* across concurrent
+      # jobs, leading to source/object corruption under
+      # workspace-scale compilation. ib_console's build cache
+      # (separate) still accelerates compile.
+      CARGO_HOME: ${{ github.workspace }}/.cargo
+      CARGO_TARGET_DIR: ${{ github.workspace }}/target
 
     strategy:
       fail-fast: false
@@ -372,6 +410,8 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Ensure baseline tools (sudo/curl/wget)
+        run: ./scripts/ensure-ci-tools.sh
       # no release versioning, see https://github.com/dtolnay/rust-toolchain/issues/180
       - uses: dtolnay/rust-toolchain@efa25f7f19611383d5b0ccf2d1c8914531636bf9
         with:
@@ -386,7 +426,7 @@ jobs:
           workspaces: 'crates/fuzz -> target'
 
       - if: steps.cache-rust.outputs.cache-hit != 'true'
-        run: cargo install cargo-fuzz
+        run: ./scripts/cargo-ib.sh install cargo-fuzz
 
       # don't use .venv python in CI
       - run: rm .cargo/config.toml
@@ -396,7 +436,7 @@ jobs:
           # Use --sanitizer none to avoid ASAN/SanitizerCoverage linking issues on CI
           # (undefined __sancov_gen_.* symbols). For short CI runs, we're mainly
           # catching panics, not memory bugs.
-          cargo fuzz run --fuzz-dir crates/fuzz --sanitizer none ${{ matrix.target }} -- -max_total_time=60
+          ./scripts/cargo-ib.sh fuzz run --fuzz-dir crates/fuzz --sanitizer none ${{ matrix.target }} -- -max_total_time=60
 
   # https://github.com/marketplace/actions/alls-green#why used for branch protection checks
   check:
