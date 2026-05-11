@@ -102,6 +102,7 @@ jobs:
         run: ./scripts/ib-stats.sh
 
   test-rust:
+    needs: [bench-test, lint, test-python-coverage]
     runs-on: incredibuild-runner
     timeout-minutes: 30
     env:
