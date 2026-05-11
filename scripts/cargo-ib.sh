@@ -64,12 +64,9 @@ IB_PROFILE="${IB_PROFILE:-$PWD/scripts/ib-profile.xml}"
 export IB_CACHE_LOG IB_PROFILE
 
 if [ -x /usr/bin/ib_console ]; then
-    if [ -f "$IB_PROFILE" ]; then
-        echo "cargo-ib: using IB profile $IB_PROFILE"
-    else
-        echo "cargo-ib: WARNING IB profile $IB_PROFILE not found, falling back to system default (rustc will NOT be ib_cached)"
-        IB_PROFILE=""
-    fi
+    # EXPERIMENT B: force default IB profile (no rustc ib_cache)
+    echo "cargo-ib: EXP-B — using DEFAULT ib_profile (rustc NOT cached)"
+    IB_PROFILE=""
 
     set -- \
         --standalone \
