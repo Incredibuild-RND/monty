@@ -520,7 +520,6 @@ jobs:
             echo "LD_LIBRARY_PATH=$PY_PREFIX/lib"
           } >> "$GITHUB_ENV"
 
-
       - run: uv sync --all-packages --only-dev
       - run: make dev-py
       - run: make pytest
@@ -844,8 +843,6 @@ jobs:
           # (undefined __sancov_gen_.* symbols). For short CI runs, we're mainly
           # catching panics, not memory bugs.
           ./scripts/cargo-ib.sh fuzz run --fuzz-dir crates/fuzz --sanitizer none ${{ matrix.target }} -- -max_total_time=60
-
-  # https://github.com/marketplace/actions/alls-green#why used for branch protection checks
 
       - name: IB cache stats
         if: always()
