@@ -95,7 +95,7 @@ jobs:
           cache-on-failure: true
           prefix-key: 'v1-rust'
 
-          save-if: ${{ false }}  # IB cache is the cache here; Swatinem post-save hangs on this runner image
+          save-if: ${{ false }} # IB cache is the cache here; Swatinem post-save hangs on this runner image
       - uses: astral-sh/setup-uv@cec208311dfd045dd5311c1add060b2062131d57 # v8.0.0
         with:
           enable-cache: true # zizmor: ignore[cache-poisoning] -- Job does not produce release artifacts and does not have sensitive permissions
@@ -200,7 +200,7 @@ jobs:
           lookup-only: false # zizmor: ignore[cache-poisoning] -- Job does not produce release artifacts and does not have sensitive permissions
           cache-on-failure: true
 
-          save-if: ${{ false }}  # IB cache is the cache here; Swatinem post-save hangs on this runner image
+          save-if: ${{ false }} # IB cache is the cache here; Swatinem post-save hangs on this runner image
       - uses: taiki-e/install-action@1ed3272338f573e042a2e6bca3893aa19f43b47a # v2.71.3
         with:
           tool: cargo-llvm-cov
@@ -368,7 +368,7 @@ jobs:
           lookup-only: false # zizmor: ignore[cache-poisoning] -- Job does not produce release artifacts and does not have sensitive permissions
           cache-on-failure: true
 
-          save-if: ${{ false }}  # IB cache is the cache here; Swatinem post-save hangs on this runner image
+          save-if: ${{ false }} # IB cache is the cache here; Swatinem post-save hangs on this runner image
       - uses: taiki-e/install-action@1ed3272338f573e042a2e6bca3893aa19f43b47a # v2.71.3
         with:
           tool: cargo-llvm-cov
@@ -576,7 +576,7 @@ jobs:
           lookup-only: false # zizmor: ignore[cache-poisoning] -- Job does not produce release artifacts and does not have sensitive permissions
           cache-on-failure: true
 
-          save-if: ${{ false }}  # IB cache is the cache here; Swatinem post-save hangs on this runner image
+          save-if: ${{ false }} # IB cache is the cache here; Swatinem post-save hangs on this runner image
       - uses: astral-sh/setup-uv@cec208311dfd045dd5311c1add060b2062131d57 # v8.0.0
         with:
           enable-cache: true # zizmor: ignore[cache-poisoning] -- Job does not produce release artifacts and does not have sensitive permissions
@@ -744,7 +744,7 @@ jobs:
           lookup-only: false # zizmor: ignore[cache-poisoning] -- Job does not produce release artifacts and does not have sensitive permissions
           cache-on-failure: true
 
-          save-if: ${{ false }}  # IB cache is the cache here; Swatinem post-save hangs on this runner image
+          save-if: ${{ false }} # IB cache is the cache here; Swatinem post-save hangs on this runner image
       - name: set up python
         uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
         with:
@@ -883,7 +883,7 @@ jobs:
           lookup-only: false # zizmor: ignore[cache-poisoning] -- Job does not produce release artifacts and does not have sensitive permissions
           cache-on-failure: true
 
-          save-if: ${{ false }}  # IB cache is the cache here; Swatinem post-save hangs on this runner image
+          save-if: ${{ false }} # IB cache is the cache here; Swatinem post-save hangs on this runner image
       # don't use .venv python in CI
       - run: rm .cargo/config.toml
 
@@ -989,7 +989,7 @@ jobs:
           cache-on-failure: true
           prefix-key: 'v1-rust-fuzz'
           workspaces: 'crates/fuzz -> target'
-          save-if: ${{ false }}  # IB cache is the cache here; Swatinem post-save hangs on this runner image
+          save-if: ${{ false }} # IB cache is the cache here; Swatinem post-save hangs on this runner image
 
       - if: steps.cache-rust.outputs.cache-hit != 'true'
         run: ./scripts/cargo-ib.sh install cargo-fuzz
