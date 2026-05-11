@@ -90,6 +90,15 @@ jobs:
       # (separate) still accelerates compile.
       CARGO_HOME: ${{ github.workspace }}/.cargo
       CARGO_TARGET_DIR: ${{ github.workspace }}/target
+      # IB runner cap mitigation: this is the heaviest job (7x
+      # cargo llvm-cov on the workspace). When 2+ heavy IB jobs run
+      # concurrently each spawning nproc rustc instances, the shared
+      # runner CPU saturates and we hit the ~12-min wall-clock cap.
+      # Cap local rustc concurrency; ib_console's build cache hits
+      # are I/O-bound anyway. --prevent-initiator-overload is a
+      # no-op under --standalone (no remote helpers) but harmless.
+      IB_MAX_LOCAL_CORES: '4'
+      IB_PREVENT_OVERLOAD: '1'
       # The IB runner's default locale is C/POSIX. CPython then picks
       # the ASCII codec as the default text I/O encoding, which makes
       # monty-datatest's CPython-comparison test_cases fail when
@@ -168,6 +177,9 @@ jobs:
       CARGO_TARGET_DIR: ${{ github.workspace }}/target
       # Route maturin's internal cargo invocation through ib_console.
       CARGO: ${{ github.workspace }}/scripts/cargo-ib.sh
+      # IB runner cap mitigation, see test-rust comment.
+      IB_MAX_LOCAL_CORES: '4'
+      IB_PREVENT_OVERLOAD: '1'
       LANG: C.UTF-8
       LC_ALL: C.UTF-8
       PYTHONUTF8: '1'
@@ -376,6 +388,10 @@ jobs:
       # (separate) still accelerates compile.
       CARGO_HOME: ${{ github.workspace }}/.cargo
       CARGO_TARGET_DIR: ${{ github.workspace }}/target
+      # Lighter than test-rust (one cargo bench compile vs 7 llvm-cov
+      # passes); allow more local cores.
+      IB_MAX_LOCAL_CORES: '8'
+      IB_PREVENT_OVERLOAD: '1'
 
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -421,6 +437,8 @@ jobs:
       # (separate) still accelerates compile.
       CARGO_HOME: ${{ github.workspace }}/.cargo
       CARGO_TARGET_DIR: ${{ github.workspace }}/target
+      IB_MAX_LOCAL_CORES: '8'
+      IB_PREVENT_OVERLOAD: '1'
 
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -464,6 +482,8 @@ jobs:
       # (separate) still accelerates compile.
       CARGO_HOME: ${{ github.workspace }}/.cargo
       CARGO_TARGET_DIR: ${{ github.workspace }}/target
+      IB_MAX_LOCAL_CORES: '8'
+      IB_PREVENT_OVERLOAD: '1'
 
     strategy:
       fail-fast: false

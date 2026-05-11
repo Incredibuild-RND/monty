@@ -75,6 +75,32 @@ else
 fi
 ls -la scripts/ib-profile.xml 2>/dev/null || true
 
+# 2b. export IB_CACHE_LOG / IB_PROFILE for cargo-ib.sh -------------------
+# Logfile path must be ABSOLUTE (XgConsole_main.cpp:482). We put it under
+# /etc/incredibuild/log/ — the canonical IB log dir on the runner image
+# (ib-stats.sh already greps there), which survives any chroot/namespace
+# teardown ib_console may do for intercepted processes. Per-job filename
+# so concurrent jobs on the same runner don't stomp each other's log.
+if [ -n "${GITHUB_ENV:-}" ]; then
+    job_id="${GITHUB_JOB:-local}_${GITHUB_RUN_ID:-0}_${GITHUB_RUN_ATTEMPT:-1}"
+    log_path="/etc/incredibuild/log/ib_cache_${job_id}.log"
+    profile_path="$PWD/scripts/ib-profile.xml"
+    {
+        echo "IB_CACHE_LOG=$log_path"
+        echo "IB_PROFILE=$profile_path"
+    } >> "$GITHUB_ENV"
+    echo "IB_CACHE_LOG=$log_path"
+    echo "IB_PROFILE=$profile_path"
+    # mkdir at root may need sudo if not already root; tolerate failure
+    # (cargo-ib.sh re-tries the mkdir).
+    if is_root; then
+        mkdir -p /etc/incredibuild/log 2>/dev/null || true
+    else
+        sudo mkdir -p /etc/incredibuild/log 2>/dev/null || true
+        sudo chmod 1777 /etc/incredibuild/log 2>/dev/null || true
+    fi
+fi
+
 # 3. libpython link safety (only meaningful when python is on PATH) ------
 if command -v python3 >/dev/null 2>&1; then
     PY_PREFIX=$(python3 -c 'import sys; print(sys.prefix)')

@@ -2,28 +2,43 @@
 <!--
     Custom Incredibuild profile for monty.
 
-    The default /opt/incredibuild/data/ib_profile.xml has rustc as
-    type="allow_remote" but does NOT enable ib_cache for it. That means
-    rustc invocations get DISTRIBUTED across the IB build network but
-    their outputs are NOT persisted to the build-avoidance cache, so
-    subsequent runs re-compile the same crates from scratch.
+    PHILOSOPHY (per ib_linux:data/ib_profile.xml in the product source):
+    the system default profile already opts gcc/clang/cc1/cc1plus and
+    other C/C++ compilers into local-only build-avoidance caching via
+      type="local_only" cached="true" exclude_args="-c:-S:-E"
+    rustc, by contrast, is shipped as type="allow_remote" with NO
+    ib_cache element, i.e. distributed across IB helpers but NOT
+    persisted to the build-avoidance cache. The product authors made
+    that choice deliberately; for monty (which is ~100% rustc), it
+    means "out of the box" caching value is near-zero.
 
-    Adding the ib_cache child element opts rustc into the same
-    cache-and-replay path that gcc/clang/cc1/cc1plus already use in
-    the default profile. ib_cache (not ccache) is used because ccache
-    does not understand rustc invocation/output model; ib_cache has
-    explicit rustc support, including the rustc .rsp file basedir
-    placeholder transformation (see ib_linux:cpp/BuildCache/
-    BuildCache_Rules.cpp).
+    This profile flips exactly one knob: it adds an ib_cache element
+    on rustc so its outputs land in /etc/incredibuild/cache/build_cache
+    /shared/ and replay on subsequent runs. The rustc .rsp file
+    basedir placeholder transformation needed to make those cache keys
+    workspace-portable lives in ib_linux:cpp/BuildCache/BuildCache_Rules.cpp
+    and is keyed off the process name "rustc", so it activates the
+    moment ib_cache is on.
 
-    Schema (ib_profile.xsd) requires:
+    SCHEMA NOTE (ib_linux:data/ib_profile.xsd):
       ib_profile@version=1
       child sequence: globals then processes
-      globals@ignore_following_profiles is required; setting it to
-      false makes this profile additive on top of the system default.
+      globals@ignore_following_profiles=false makes this profile
+      ADDITIVE on top of the system default. We deliberately do NOT
+      redeclare gcc/clang/cc1/cc1plus here; those entries inherit
+      from the system default and re-stating them would shadow
+      cached="true" if we ever forgot to copy it.
+
+    EXCLUDE_ARGS:
+      - --version, -vV are diagnostic and shouldn't pollute keys.
+      - build_script_build / build_script_main are cargo's compiled
+        build scripts, which have side effects (env probes, fs
+        writes) and are non-deterministic across runs. Leaving these
+        cacheable would risk silent staleness.
+      Identical to the system default's rustc rule.
 
     Note: XML comments may not contain a double-hyphen, so this file
-    spells command-line flags without the leading dashes.
+    spells command-line flags without the leading dashes when needed.
 -->
 <ib_profile version="1">
     <globals

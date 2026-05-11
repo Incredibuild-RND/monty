@@ -1,0 +1,340 @@
+name: ib-bench
+
+# 4-cell A/B/C/D measurement matrix for the IncrediBuild integration.
+# The same cargo workload runs under each configuration, three iterations
+# each, capturing wall-clock + IB cache hit/miss + cache-dir size + the
+# byte hash of the produced rust-coverage.json artifact.
+#
+# Cells (per the plan in monty/.cursor/plans/monty IB best-value-*.plan.md):
+#   A  ubuntu-latest, plain cargo (Swatinem rust-cache enabled)
+#   B  incredibuild-runner, ib_console with the system DEFAULT profile
+#      (rustc NOT cached). Isolates ib_console overhead + incidental
+#      C-library cache hits in transitive deps from rustc caching.
+#   C  incredibuild-runner, custom profile (rustc cached), COLD cache
+#      (cleared at job start). Models "first run on a clean runner."
+#   D  incredibuild-runner, custom profile (rustc cached), WARM cache
+#      (populated by C above). Models "every push after the first."
+#
+# C must run before D on the same runner so D inherits a populated
+# /etc/incredibuild/cache/build_cache/shared/ from C.
+
+on:
+  workflow_dispatch:
+    inputs:
+      iterations:
+        description: 'Iterations per cell'
+        type: string
+        default: '3'
+
+permissions: {}
+
+concurrency:
+  group: ib-bench-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  COLUMNS: 150
+  UV_PYTHON: '3.14'
+  UV_FROZEN: '1'
+  # The dominant compile in test-rust is `cargo llvm-cov --no-report -p monty`;
+  # ib-bench-run.sh hardcodes that workload so its result transfers
+  # directly to test-rust wall-clock.
+
+jobs:
+  cell-A-ubuntu-no-ib:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      CARGO_HOME: ${{ github.workspace }}/.cargo
+      CARGO_TARGET_DIR: ${{ github.workspace }}/target
+      LANG: C.UTF-8
+      LC_ALL: C.UTF-8
+      PYTHONUTF8: '1'
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@efa25f7f19611383d5b0ccf2d1c8914531636bf9
+        with:
+          toolchain: stable
+          components: llvm-tools
+
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          lookup-only: false # zizmor: ignore[cache-poisoning] -- bench artifact only, not released
+          cache-on-failure: true
+          prefix-key: 'v1-ib-bench'
+
+      - uses: taiki-e/install-action@1ed3272338f573e042a2e6bca3893aa19f43b47a # v2.71.3
+        with:
+          tool: cargo-llvm-cov
+
+      - name: set up python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: '3.14'
+
+      - run: rm -f .cargo/config.toml
+
+      - name: prime workspace
+        run: cargo llvm-cov clean --workspace
+
+      - name: bench cell A
+        env:
+          CELL: A
+          ITERATIONS: ${{ inputs.iterations }}
+        run: ./scripts/ib-bench-run.sh
+
+      - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: bench-cell-A
+          path: bench-results/A.csv
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: bench-coverage-A
+          path: rust-coverage.json
+          if-no-files-found: error
+
+  cell-B-ib-no-cache:
+    runs-on: incredibuild-runner
+    timeout-minutes: 60
+    env:
+      CARGO_HOME: ${{ github.workspace }}/.cargo
+      CARGO_TARGET_DIR: ${{ github.workspace }}/target
+      LANG: C.UTF-8
+      LC_ALL: C.UTF-8
+      PYTHONUTF8: '1'
+      # IB_NO_CACHE makes cargo-ib.sh omit --profile, leaving the
+      # system default profile (rustc not cached).
+      IB_NO_CACHE: '1'
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@efa25f7f19611383d5b0ccf2d1c8914531636bf9
+        with:
+          toolchain: stable
+          components: llvm-tools
+
+      - uses: taiki-e/install-action@1ed3272338f573e042a2e6bca3893aa19f43b47a # v2.71.3
+        with:
+          tool: cargo-llvm-cov
+
+      - name: set up python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: '3.14'
+
+      - name: IB pre-flight
+        run: ./scripts/ib-prep.sh
+
+      - run: rm -f .cargo/config.toml
+
+      - name: clear IB cache for clean B baseline
+        run: |
+          sudo rm -rf /etc/incredibuild/cache/build_cache/shared/* 2>/dev/null || true
+          sudo rm -rf /etc/incredibuild/cache/build_cache/builds/* 2>/dev/null || true
+
+      - name: bench cell B
+        env:
+          CELL: B
+          ITERATIONS: ${{ inputs.iterations }}
+        run: ./scripts/ib-bench-run.sh
+
+      - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: bench-cell-B
+          path: bench-results/B.csv
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: bench-coverage-B
+          path: rust-coverage.json
+          if-no-files-found: error
+
+      - name: IB cache stats
+        if: always()
+        run: ./scripts/ib-stats.sh
+
+  cell-C-ib-cold:
+    needs: cell-B-ib-no-cache
+    runs-on: incredibuild-runner
+    timeout-minutes: 60
+    env:
+      CARGO_HOME: ${{ github.workspace }}/.cargo
+      CARGO_TARGET_DIR: ${{ github.workspace }}/target
+      LANG: C.UTF-8
+      LC_ALL: C.UTF-8
+      PYTHONUTF8: '1'
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@efa25f7f19611383d5b0ccf2d1c8914531636bf9
+        with:
+          toolchain: stable
+          components: llvm-tools
+
+      - uses: taiki-e/install-action@1ed3272338f573e042a2e6bca3893aa19f43b47a # v2.71.3
+        with:
+          tool: cargo-llvm-cov
+
+      - name: set up python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: '3.14'
+
+      - name: IB pre-flight
+        run: ./scripts/ib-prep.sh
+
+      - run: rm -f .cargo/config.toml
+
+      - name: clear IB cache for cold C
+        run: |
+          sudo rm -rf /etc/incredibuild/cache/build_cache/shared/* 2>/dev/null || true
+          sudo rm -rf /etc/incredibuild/cache/build_cache/builds/* 2>/dev/null || true
+
+      - name: bench cell C (cold, populates cache for D)
+        env:
+          CELL: C
+          # First iteration is cold; subsequent iterations are
+          # already-cached. We keep iterations=1 for C so the cell stays
+          # honestly "cold."
+          ITERATIONS: '1'
+        run: ./scripts/ib-bench-run.sh
+
+      - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: bench-cell-C
+          path: bench-results/C.csv
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: bench-coverage-C
+          path: rust-coverage.json
+          if-no-files-found: error
+
+      - name: IB cache stats
+        if: always()
+        run: ./scripts/ib-stats.sh
+
+  cell-D-ib-warm:
+    needs: cell-C-ib-cold
+    runs-on: incredibuild-runner
+    timeout-minutes: 60
+    env:
+      CARGO_HOME: ${{ github.workspace }}/.cargo
+      CARGO_TARGET_DIR: ${{ github.workspace }}/target
+      LANG: C.UTF-8
+      LC_ALL: C.UTF-8
+      PYTHONUTF8: '1'
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@efa25f7f19611383d5b0ccf2d1c8914531636bf9
+        with:
+          toolchain: stable
+          components: llvm-tools
+
+      - uses: taiki-e/install-action@1ed3272338f573e042a2e6bca3893aa19f43b47a # v2.71.3
+        with:
+          tool: cargo-llvm-cov
+
+      - name: set up python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: '3.14'
+
+      - name: IB pre-flight
+        run: ./scripts/ib-prep.sh
+
+      - run: rm -f .cargo/config.toml
+
+      - name: bench cell D (warm cache from C)
+        env:
+          CELL: D
+          ITERATIONS: ${{ inputs.iterations }}
+        run: ./scripts/ib-bench-run.sh
+
+      - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: bench-cell-D
+          path: bench-results/D.csv
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: bench-coverage-D
+          path: rust-coverage.json
+          if-no-files-found: error
+
+      - name: IB cache stats
+        if: always()
+        run: ./scripts/ib-stats.sh
+
+  summarize:
+    needs: [cell-A-ubuntu-no-ib, cell-B-ib-no-cache, cell-C-ib-cold, cell-D-ib-warm]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v6.0.0
+        with:
+          path: bench-artifacts
+
+      - name: collect per-cell CSVs and coverage hashes
+        run: |
+          set -euo pipefail
+          mkdir -p bench-results
+          for cell in A B C D; do
+            src="bench-artifacts/bench-cell-$cell/$cell.csv"
+            if [ -f "$src" ]; then
+              cp "$src" "bench-results/$cell.csv"
+            fi
+          done
+          # Cross-cell coverage hash check: if any cells produced a
+          # coverage artifact, the summarizer asserts they all match.
+          # We splice the coverage SHA into the CSV before summarizing
+          # so the correctness gate has the data it needs.
+          python3 - <<'PY'
+          import csv, hashlib, pathlib
+          for cell in "ABCD":
+              src = pathlib.Path(f"bench-artifacts/bench-coverage-{cell}/rust-coverage.json")
+              csv_path = pathlib.Path(f"bench-results/{cell}.csv")
+              if not src.is_file() or not csv_path.is_file():
+                  continue
+              sha = hashlib.sha256(src.read_bytes()).hexdigest()
+              rows = list(csv.DictReader(csv_path.open()))
+              for r in rows:
+                  r["coverage_sha256"] = sha
+              if rows:
+                  with csv_path.open("w", newline="") as f:
+                      w = csv.DictWriter(f, fieldnames=list(rows[0].keys()))
+                      w.writeheader()
+                      w.writerows(rows)
+          PY
+
+      - name: summarize
+        run: python3 scripts/ib-bench-summarize.py bench-results
+
+      - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: ib-bench-summary
+          path: bench-results/
+          if-no-files-found: warn

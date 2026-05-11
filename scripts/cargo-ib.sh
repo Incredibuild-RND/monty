@@ -1,83 +1,107 @@
 #!/usr/bin/env bash
 # Invoke cargo through Incredibuild's ib_console when available so heavy
-# compile commands (build, test, clippy, check, llvm-cov, fuzz, etc.)
-# get distributed across the IB acceleration network and their outputs
-# get persisted to the build-avoidance cache.
+# rustc invocations (build, test, clippy, check, llvm-cov, fuzz, ...)
+# run under build-avoidance caching.
 #
-# On runners that don't have ib_console (e.g. ubuntu-latest carve-outs
-# for cross-compile / Docker-dependent jobs), this falls through to
-# plain `cargo` so the same workflow step works on both runner types.
+# On runners without ib_console (ubuntu-latest carve-outs, macOS/Windows,
+# local dev) this falls through to plain `cargo`, so the same workflow
+# step is portable.
 #
-# Why a custom --profile:
-# --------------------
-# The default /opt/incredibuild/data/ib_profile.xml lists rustc as
-#   <process filename="rustc" type="allow_remote" .../>
-# with NO ib_cache entry. That means rustc gets distributed across IB
-# build agents but its outputs are NOT persisted to the local build
-# cache (under /etc/incredibuild/cache/build_cache/shared/). The
-# custom profile at scripts/ib-profile.xml adds
-#   <ib_cache enabled="true" />
-# to rustc so subsequent runs can replay cached compilations.
+# DESIGN NOTES (grounded in ib_linux source):
+# -------------------------------------------
+# Flag set is the minimum needed to produce cache hits in --standalone
+# mode, verified against the option table in
+#   ib_linux:cpp/XgConsole/XgConsole_main.cpp (lines 84-152, 270-650).
 #
-# ib_console flags actually accepted by this binary (verified in
-# ib_linux:cpp/XgConsole/XgConsole_main.cpp option table):
-#   --standalone                 run without joining a coordinator
-#   --build-cache-local-shared   use the local shared cache at
-#                                /etc/incredibuild/cache/build_cache/shared/
-#   --build-cache-basedir=PWD    scope the cache key to the workspace
-#                                root (paths inside PWD become a
-#                                placeholder so cached artifacts are
-#                                portable across runs in different
-#                                workspace dirs)
-#   --build-cache-local-logfile  append hit/miss/info log lines (path
-#                                must be absolute)
-#   --build-cache-report-all-miss
-#                                summarize every miss reason
-#   --profile=...                additional profile file (loaded on
-#                                top of /opt/incredibuild/data/ib_profile.xml)
-#   --debug=build_cache          verbose build-cache diagnostics
+#   --standalone                  do not try to join an IB coordinator.
+#                                 monty CI has no helpers configured;
+#                                 this prevents a 30s connect timeout.
+#   --build-cache-local-shared    use the shared local cache at
+#                                 /etc/incredibuild/cache/build_cache/shared/
+#                                 (path from BuildCache_defines.h).
+#   --build-cache-basedir=$PWD    rewrite $PWD -> placeholder in the
+#                                 cache key, so artifacts are portable
+#                                 across runs in different workspace
+#                                 dirs (Manifest::init in
+#                                 BuildCache_BuildCache.cpp:198).
+#   --build-cache-local-logfile   per-job hit/miss/info log; absolute
+#                                 path required (XgConsole_main.cpp:482).
+#   --build-cache-report-all-miss list every cache miss with the reason
+#                                 (BuildCache_HitMiss.cpp); useful for
+#                                 attribution in CI logs.
+#   --no-monitor                  monty CI doesn't use the IB build
+#                                 monitor; saves startup overhead.
+#   --profile=<file>              additive profile loaded after the
+#                                 system default. monty's
+#                                 scripts/ib-profile.xml just adds
+#                                 <ib_cache enabled="true"/> on rustc.
+#   --debug=build_cache           verbose cache diagnostics (IB_DEBUG=1
+#                                 only — chatty otherwise).
 #
-# Flags that do NOT exist in this version (do not pass them, they are
-# silently ignored): --build-cache-force.
+# Flags deliberately NOT passed:
+#   --build-cache-force           does not exist in this binary
+#                                 (verified absent from option table).
+#   --avoid-* aliases             same flags as --build-cache-local-*,
+#                                 use the canonical name.
+#   --force-remote                no helpers in --standalone, no-op.
+#   --build-cache-service=URL     no remote cache server stood up yet;
+#                                 future work.
+#
+# Caller contract:
+#   IB_CACHE_LOG          absolute path of the cache logfile. ib-prep.sh
+#                         sets a per-job default under /etc/incredibuild/log/.
+#   IB_PROFILE            path to additive profile XML. ib-prep.sh sets it.
+#   IB_DEBUG              if non-empty, pass --debug=build_cache.
+#   IB_NO_CACHE           if non-empty, skip --profile (run with the
+#                         system default profile, i.e. rustc NOT cached).
+#                         Used by the measurement workflow's "B — IB no
+#                         rustc cache" cell.
+#   IB_MAX_LOCAL_CORES    if non-empty, pass --max-local-cores=<N> to
+#                         throttle local rustc concurrency. Used in
+#                         ci.yml to keep concurrent IB jobs on the same
+#                         shared runner from each spawning nproc rustc
+#                         instances and tripping the runner's wall-clock
+#                         cap.
+#   IB_PREVENT_OVERLOAD   if non-empty, pass --prevent-initiator-overload
+#                         (a no-op under --standalone since there are no
+#                         remote helpers to push to, but harmless and
+#                         future-proofs for when a coordinator is added).
 
 set -euo pipefail
 
-# Expose IB's shared cargo target dir at the workspace's ./target/
-# location BEFORE running cargo. If a prior cargo run on this runner
-# created the IB target dir, symlink to it so subsequent builds
-# benefit (without breaking jobs that already have a target/ dir from
-# Swatinem/rust-cache).
-IB_TARGET="${IB_CARGO_TARGET_DIR:-/ib-workspace/cache/cargo-target}"
-if [ -d "$IB_TARGET" ] && [ ! -e "$PWD/target" ]; then
-    ln -s "$IB_TARGET" "$PWD/target"
-    echo "cargo-ib: $PWD/target -> $IB_TARGET"
-fi
-
-# Per-job IB diagnostic log path. Must be ABSOLUTE per ib_console
-# validation. ib_console may run intercepted processes in a chroot /
-# namespace (tools/deployment/ib_console_chroot, ib_console_ns), so a
-# path under RUNNER_TEMP may not be visible inside the sandbox. We
-# still try, and the workflow's post-flight step also inspects the
-# canonical cache dir at /etc/incredibuild/cache/build_cache/shared/.
-IB_CACHE_LOG="${IB_CACHE_LOG:-${RUNNER_TEMP:-/tmp}/ib_cache.log}"
-IB_PROFILE="${IB_PROFILE:-$PWD/scripts/ib-profile.xml}"
-export IB_CACHE_LOG IB_PROFILE
-
-if [ -x /usr/bin/ib_console ]; then
-    # EXPERIMENT B: force default IB profile (no rustc ib_cache)
-    echo "cargo-ib: EXP-B — using DEFAULT ib_profile (rustc NOT cached)"
-    IB_PROFILE=""
-
-    set -- \
-        --standalone \
-        --build-cache-local-shared \
-        --build-cache-basedir="$PWD" \
-        --build-cache-local-logfile="$IB_CACHE_LOG" \
-        --build-cache-report-all-miss \
-        --debug=build_cache \
-        ${IB_PROFILE:+--profile="$IB_PROFILE"} \
-        cargo "$@"
-    exec /usr/bin/ib_console "$@"
-else
+if [ ! -x /usr/bin/ib_console ]; then
     exec cargo "$@"
 fi
+
+LOG="${IB_CACHE_LOG:-/etc/incredibuild/log/ib_cache_${GITHUB_JOB:-local}_${GITHUB_RUN_ID:-0}.log}"
+mkdir -p "$(dirname "$LOG")" 2>/dev/null || true
+
+PROFILE_FLAG=()
+if [ -z "${IB_NO_CACHE:-}" ] && [ -n "${IB_PROFILE:-}" ] && [ -f "${IB_PROFILE}" ]; then
+    PROFILE_FLAG=(--profile="${IB_PROFILE}")
+fi
+
+DEBUG_FLAG=()
+if [ -n "${IB_DEBUG:-}" ]; then
+    DEBUG_FLAG=(--debug=build_cache)
+fi
+
+CAP_FLAGS=()
+if [ -n "${IB_MAX_LOCAL_CORES:-}" ]; then
+    CAP_FLAGS+=(--max-local-cores="${IB_MAX_LOCAL_CORES}")
+fi
+if [ -n "${IB_PREVENT_OVERLOAD:-}" ]; then
+    CAP_FLAGS+=(--prevent-initiator-overload)
+fi
+
+exec /usr/bin/ib_console \
+    --standalone \
+    --build-cache-local-shared \
+    --build-cache-basedir="$PWD" \
+    --build-cache-local-logfile="$LOG" \
+    --build-cache-report-all-miss \
+    --no-monitor \
+    "${CAP_FLAGS[@]}" \
+    "${PROFILE_FLAG[@]}" \
+    "${DEBUG_FLAG[@]}" \
+    cargo "$@"
