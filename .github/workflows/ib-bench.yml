@@ -25,6 +25,19 @@ on:
         description: 'Iterations per cell'
         type: string
         default: '3'
+  # Auto-run when the bench infrastructure itself changes on the
+  # IB integration branch, so we get a fresh measurement table after
+  # each tuning commit. Scoped to the bench files only — does NOT
+  # fire on every CI commit.
+  push:
+    branches:
+      - ci/incredibuild-runners
+    paths:
+      - .github/workflows/ib-bench.yml
+      - scripts/ib-bench-run.sh
+      - scripts/ib-bench-summarize.py
+      - scripts/cargo-ib.sh
+      - scripts/ib-profile.xml
 
 permissions: {}
 
