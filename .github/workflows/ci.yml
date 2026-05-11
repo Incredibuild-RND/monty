@@ -299,6 +299,15 @@ jobs:
       LANG: C.UTF-8
       LC_ALL: C.UTF-8
       PYTHONUTF8: '1'
+      # Disable LTO and use more codegen-units for `make dev-py-release`
+      # inside this job. The Cargo.toml release profile has lto='fat'
+      # + codegen-units=1 which is great for production wheels but
+      # pushes the maturin release compile past the IB runner's ~12-min
+      # wall-clock cap. The real LTO-built release wheels are still
+      # tested by test-builds-os/test-builds-arch which use the
+      # maturin-action Docker image, so coverage is preserved.
+      CARGO_PROFILE_RELEASE_LTO: 'false'
+      CARGO_PROFILE_RELEASE_CODEGEN_UNITS: '16'
 
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
