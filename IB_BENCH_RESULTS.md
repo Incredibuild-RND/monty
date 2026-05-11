@@ -362,4 +362,3 @@ repo using maturin/pyo3, not just monty, so worth keeping in mind.
 - Self-hosted runner availability is the single biggest CI risk —
   even with everything else green, an offline pool stalls the
   measurement.
-
