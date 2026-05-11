@@ -1,32 +1,34 @@
 #!/usr/bin/env bash
-# Runs $BENCH_CMD ($ITERATIONS times) under whatever cargo flavour is
-# active in the surrounding job, captures wall-clock + IB cache HIT/MISS
+# Runs a single deterministic cargo workload N times under whatever
+# cargo flavour the surrounding job sets (plain cargo for cell A,
+# cargo-ib.sh for cells B/C/D), captures wall-clock + IB cache HIT/MISS
 # + cache-dir-size deltas + final target/ size, and emits one CSV row
 # per iteration to bench-results/$CELL.csv.
 #
-# Cells A/B/C/D differ only in the surrounding job env (ubuntu-latest
-# vs incredibuild-runner; IB_NO_CACHE vs IB_PROFILE; cold vs warm IB
-# cache). All four invoke this script identically.
+# Bench workload: `cargo test --no-run -p monty`. Compiles monty's
+# test binary but doesn't execute it — exercises the same rustc work
+# that dominates the production test-rust job, without depending on
+# the third-party cargo-llvm-cov subcommand. The number we publish
+# transfers directly to the test-rust wall-clock minus the test-run
+# tail.
 #
 # CSV columns:
 #   iteration, wall_seconds, user_seconds, sys_seconds, max_rss_kb,
 #   hits, misses, cache_size_bytes_delta, target_size_bytes,
 #   coverage_sha256
 #
-# coverage_sha256 is filled in by the summarize job (it has the artifact
-# from every cell); this script writes an empty placeholder.
+# coverage_sha256 is filled in by the summarize job; this script
+# leaves it empty.
 
-set -euo pipefail
+set -uo pipefail
 
 CELL="${CELL:?CELL must be set (A/B/C/D)}"
 ITERATIONS="${ITERATIONS:-3}"
+[ -z "$ITERATIONS" ] && ITERATIONS=3
 
-# Bench workload: the dominant compile in the test-rust job. Hardcoded
-# (not env-driven) because the report regex contains shell
-# metacharacters that don't survive word-splitting through env vars.
-BENCH_ARGS=(llvm-cov --no-report -p monty)
-REPORT_ARGS=(llvm-cov report --codecov --output-path=rust-coverage.json
-             --ignore-filename-regex '(tests/|test_cases/|/tests\.rs$)')
+# Bench workload — hardcoded so shell metacharacters in args are not
+# a portability concern.
+BENCH_ARGS=(test --no-run -p monty)
 
 mkdir -p bench-results
 OUT="bench-results/${CELL}.csv"
@@ -39,10 +41,24 @@ else
     CARGO_RUNNER=(cargo)
 fi
 
+echo "::group::bench setup diagnostic"
+echo "CELL=$CELL ITERATIONS=$ITERATIONS"
+echo "CARGO_RUNNER=${CARGO_RUNNER[*]}"
+echo "BENCH_ARGS=${BENCH_ARGS[*]}"
+echo "PWD=$PWD"
+echo "PATH=$PATH"
+echo "which cargo: $(command -v cargo || echo MISSING)"
+cargo --version 2>&1 || echo "cargo --version FAILED"
+rustc --version --verbose 2>&1 || echo "rustc --version FAILED"
+ls -la /usr/bin/ib_console 2>&1 || true
+ls -la /usr/bin/time 2>&1 || true
+ls -la /etc/incredibuild/log/ 2>&1 || true
+echo "::endgroup::"
+
 cache_size() {
     local d="/etc/incredibuild/cache/build_cache/shared"
     if [ -d "$d" ]; then
-        du -sb "$d" 2>/dev/null | awk '{print $1}'
+        du -sb "$d" 2>/dev/null | awk '{print $1+0}'
     else
         echo 0
     fi
@@ -50,64 +66,83 @@ cache_size() {
 
 target_size() {
     if [ -d target ]; then
-        du -sb target 2>/dev/null | awk '{print $1}'
+        du -sb target 2>/dev/null | awk '{print $1+0}'
     else
         echo 0
     fi
 }
 
 count_logfile() {
-    # Sums HIT / MISS counts across all per-job IB cache logfiles. The
-    # bench script reuses the surrounding job's IB_CACHE_LOG (set by
-    # ib-prep.sh) but cargo invocations may rotate logfiles between
-    # iterations; safer to sum the dir.
+    # Sum HIT / MISS counts across all per-job IB cache logfiles.
     local dir="/etc/incredibuild/log"
     local kind="$1"
     if [ -d "$dir" ]; then
-        grep -h -c -E "^${kind}[[:space:]]" "$dir"/ib_cache_*.log 2>/dev/null \
-            | awk '{s+=$1} END {print s+0}'
+        local n
+        n=$(grep -h -c -E "^${kind}[[:space:]]" "$dir"/ib_cache_*.log 2>/dev/null \
+            | awk '{s+=$1} END {print s+0}')
+        echo "${n:-0}"
     else
         echo 0
     fi
 }
 
 # Each iteration:
-#   1. clean the cargo target dir (so the rustc work is real)
+#   1. clean target/ (full rebuild)
 #   2. snapshot pre-cache size
-#   3. run BENCH_CMD under /usr/bin/time
+#   3. run cargo under /usr/bin/time -v
 #   4. snapshot post-cache size and HIT/MISS deltas
 #   5. emit one CSV row
-# The final iteration also runs BENCH_REPORT_CMD to produce
-# rust-coverage.json for the cross-cell correctness check.
+# We capture the cargo exit code but DO NOT abort the rest of the
+# loop — the data point is still valuable (high wall-clock, zero
+# hits) and we want all iterations visible in the CSV.
 for i in $(seq 1 "$ITERATIONS"); do
     echo "::group::cell ${CELL} iteration ${i}/${ITERATIONS}"
 
-    "${CARGO_RUNNER[@]}" llvm-cov clean --workspace 2>&1 | tail -5 || true
+    # Clean target/ between iterations so the rustc work is real
+    # every time. Use direct rm rather than `cargo clean` to avoid
+    # any cargo-subcommand dispatch quirks under ib_console.
+    rm -rf target 2>&1 | tail -5 || true
+
     pre_cache=$(cache_size)
     pre_hits=$(count_logfile HIT)
     pre_misses=$(count_logfile MISS)
+    echo "pre: cache=${pre_cache}B hits=${pre_hits} misses=${pre_misses}"
 
     time_out=$(mktemp)
+    set +e
     /usr/bin/time -v -o "$time_out" \
-        "${CARGO_RUNNER[@]}" "${BENCH_ARGS[@]}" 2>&1 \
-        | tail -200 || true
+        "${CARGO_RUNNER[@]}" "${BENCH_ARGS[@]}"
+    cargo_rc=$?
+    set -e
+    echo "cargo exit code: $cargo_rc"
+    if [ "$cargo_rc" -ne 0 ]; then
+        echo "::warning::cargo iteration $i exited $cargo_rc"
+    fi
+    if [ -s "$time_out" ]; then
+        echo "--- /usr/bin/time -v output ---"
+        cat "$time_out"
+        echo "---"
+    else
+        echo "::warning::no /usr/bin/time output captured"
+    fi
 
-    wall=$(awk -F': ' '/Elapsed \(wall clock\) time/ {print $2}' "$time_out" | tail -1)
-    user=$(awk -F': ' '/User time \(seconds\)/ {print $2+0}' "$time_out" | tail -1)
-    sys=$(awk -F': ' '/System time \(seconds\)/ {print $2+0}' "$time_out" | tail -1)
-    rss=$(awk -F': ' '/Maximum resident set size/ {print $2+0}' "$time_out" | tail -1)
+    wall=$(awk -F': ' '/Elapsed \(wall clock\) time/ {print $2}' "$time_out" 2>/dev/null | tail -1)
+    user=$(awk -F': ' '/User time \(seconds\)/ {print $2+0}' "$time_out" 2>/dev/null | tail -1)
+    sys=$(awk -F': ' '/System time \(seconds\)/ {print $2+0}' "$time_out" 2>/dev/null | tail -1)
+    rss=$(awk -F': ' '/Maximum resident set size/ {print $2+0}' "$time_out" 2>/dev/null | tail -1)
 
-    # Convert HH:MM:SS or MM:SS or SS.ss into seconds.
-    wall_secs=$(python3 -c "
-import sys
-parts = '${wall}'.strip().split(':') if '${wall}' else []
-if not parts:
-    print(0); sys.exit()
-parts = [float(p) for p in parts]
+    # Convert HH:MM:SS, MM:SS, SS, or SS.ss into seconds.
+    wall_secs=$(python3 - <<PY
+w = "${wall:-0}".strip()
+if not w:
+    print(0); raise SystemExit
+parts = [float(p) for p in w.split(":")]
 secs = 0.0
 for p in parts:
     secs = secs * 60 + p
-print(f'{secs:.3f}')")
+print(f"{secs:.3f}")
+PY
+)
 
     post_cache=$(cache_size)
     post_hits=$(count_logfile HIT)
@@ -117,20 +152,15 @@ print(f'{secs:.3f}')")
     delta_misses=$((post_misses - pre_misses))
     target=$(target_size)
 
-    echo "iter=$i wall=${wall_secs}s user=${user}s sys=${sys}s rss=${rss}kb hits=${delta_hits} misses=${delta_misses} cache_delta=${delta_cache}B target=${target}B"
-    echo "$i,$wall_secs,$user,$sys,$rss,$delta_hits,$delta_misses,$delta_cache,$target," >> "$OUT"
+    echo "post: cache=${post_cache}B hits=${post_hits} misses=${post_misses} target=${target}B"
+    echo "deltas: cache=${delta_cache}B hits=${delta_hits} misses=${delta_misses}"
+    echo "iter=$i wall=${wall_secs}s user=${user:-0}s sys=${sys:-0}s rss=${rss:-0}kb"
+    echo "$i,$wall_secs,${user:-0},${sys:-0},${rss:-0},$delta_hits,$delta_misses,$delta_cache,$target," >> "$OUT"
 
     rm -f "$time_out"
     echo "::endgroup::"
 done
 
-# Produce coverage artifact from the LAST iteration's compiled state.
-# `report` is a no-op compile-wise; it just writes rust-coverage.json
-# from already-instrumented binaries.
-echo "::group::cell ${CELL} coverage artifact"
-"${CARGO_RUNNER[@]}" "${REPORT_ARGS[@]}" 2>&1 | tail -10 || true
-ls -la rust-coverage.json 2>/dev/null || true
-echo "::endgroup::"
-
-echo "wrote $OUT:"
+echo "::group::wrote $OUT"
 cat "$OUT"
+echo "::endgroup::"
