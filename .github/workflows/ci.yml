@@ -53,6 +53,11 @@ jobs:
       LANG: C.UTF-8
       LC_ALL: C.UTF-8
       PYTHONUTF8: '1'
+      # Pin uv's project env to the workspace so 'uv run basedpyright'
+      # doesn't fall through to a stale /ib-workspace/build/venv on
+      # this runner image (which has a corrupt pyright.js installed
+      # that explodes Node with a SyntaxError).
+      UV_PROJECT_ENVIRONMENT: ${{ github.workspace }}/.venv
 
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
