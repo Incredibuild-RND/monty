@@ -32,32 +32,12 @@ env:
 
 jobs:
   lint:
-    runs-on: incredibuild-runner
-    timeout-minutes: 30
-    env:
-      # CARGO_HOME OUTSIDE the workspace for lint. The other
-      # migrated jobs use $github.workspace/.cargo for per-job
-      # isolation, but lint runs prek which runs ruff over the
-      # workspace .py tree — which then walks into
-      # .cargo/git/checkouts/ruff-*/ and trips on ruff's own
-      # malformed test fixtures (.ipynb with bad JSON, .py with
-      # bad Python). Keeping CARGO_HOME under runner.temp puts
-      # the cargo registry/git checkouts outside the prek scan
-      # root.
-      CARGO_HOME: /tmp/lint-cargo
-      CARGO_TARGET_DIR: ${{ github.workspace }}/target
-      # Route prek's internal clippy/cargo invocations through ib_console
-      # so the workspace-wide clippy lint pass benefits from the same
-      # ib_cache as test-rust.
-      CARGO: ${{ github.workspace }}/scripts/cargo-ib.sh
-      LANG: C.UTF-8
-      LC_ALL: C.UTF-8
-      PYTHONUTF8: '1'
-      # Pin uv's project env to the workspace so 'uv run basedpyright'
-      # doesn't fall through to a stale /ib-workspace/build/venv on
-      # this runner image (which has a corrupt pyright.js installed
-      # that explodes Node with a SyntaxError).
-      UV_PROJECT_ENVIRONMENT: ${{ github.workspace }}/.venv
+    # Kept on ubuntu-latest. lint runs prek hooks (yamlfmt, zizmor,
+    # codespell, ruff, basedpyright, clippy) which are mostly Python /
+    # JS / fast Rust checks — minimal benefit from IB ib_cache, and
+    # the IB runner's ~10-minute wall-clock cap kept killing lint
+    # mid-prek when basedpyright + workspace-wide clippy ran together.
+    runs-on: ubuntu-latest
 
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -76,7 +56,6 @@ jobs:
           cache-on-failure: true
           prefix-key: 'v1-rust'
 
-          save-if: false # IB cache is the cache here; Swatinem post-save hangs on this runner image
       - uses: astral-sh/setup-uv@cec208311dfd045dd5311c1add060b2062131d57 # v8.0.0
         with:
           enable-cache: true # zizmor: ignore[cache-poisoning] -- Job does not produce release artifacts and does not have sensitive permissions
@@ -94,20 +73,15 @@ jobs:
         run: npm install
         working-directory: crates/monty-js
 
-      - name: IB pre-flight
-        run: ./scripts/ib-prep.sh
 
       - name: Run prek
         uses: j178/prek-action@cbc2f23eb5539cf20d82d1aabd0d0ecbcc56f4e3 # v2.2
         env:
           SKIP: no-commit-to-branch
 
-      - name: IB cache stats
-        if: always()
-        run: ./scripts/ib-stats.sh
 
   test-rust:
-    needs: [bench-test, lint, test-python-coverage]
+    needs: [bench-test, test-python-coverage]
     runs-on: incredibuild-runner
     timeout-minutes: 30
     env:
