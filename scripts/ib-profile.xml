@@ -16,14 +16,19 @@
     placeholder transformation (see ib_linux:cpp/BuildCache/
     BuildCache_Rules.cpp).
 
-    This profile is loaded additively via the ib_console profile=
-    option, on top of the system default at
-    /opt/incredibuild/data/ib_profile.xml.
+    Schema (ib_profile.xsd) requires:
+      ib_profile@version=1
+      child sequence: globals then processes
+      globals@ignore_following_profiles is required; setting it to
+      false makes this profile additive on top of the system default.
 
     Note: XML comments may not contain a double-hyphen, so this file
     spells command-line flags without the leading dashes.
 -->
 <ib_profile version="1">
+    <globals
+        ignore_following_profiles="false"
+    />
     <processes>
         <process filename="rustc"
                  type="allow_remote"
