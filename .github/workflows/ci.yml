@@ -264,41 +264,39 @@ jobs:
         if: always()
         run: |
           set +e
-          log="${RUNNER_TEMP:-/tmp}/ib_cache.log"
-          echo "=== IB cache logfile: $log ==="
-          if [ -f "$log" ]; then
-            wc -l "$log"
-            echo "--- last 200 lines ---"
-            tail -200 "$log"
-            hits=$(grep -c -iE 'cache.?hit|HIT' "$log" 2>/dev/null || echo 0)
-            misses=$(grep -c -iE 'cache.?miss|MISS' "$log" 2>/dev/null || echo 0)
-            echo "approx hits=$hits  misses=$misses"
+          echo "=== IB hit/miss logs ==="
+          # ib_console writes its hit/miss report at
+          #   /etc/incredibuild/log/YYYY-Mon-DD/local-<buildId>/ib_hm.log
+          # (path is announced in build output as
+          #   "Incredibuild System: Build Cache report is '...'").
+          # Surface the most recent few so we can see cache hits / misses
+          # for this job in the GHA log.
+          if [ -d /etc/incredibuild/log ]; then
+            mapfile -t hmlogs < <(find /etc/incredibuild/log -name ib_hm.log -printf "%T@ %p\n" 2>/dev/null | sort -rn | head -3 | cut -d" " -f2-)
+            for f in "${hmlogs[@]}"; do
+              echo "--- $f ---"
+              wc -l "$f"
+              tail -200 "$f"
+              hits=$(grep -c -iE 'HIT' "$f" 2>/dev/null || echo 0)
+              misses=$(grep -c -iE 'MISS' "$f" 2>/dev/null || echo 0)
+              echo "summary hits=$hits misses=$misses for $f"
+            done
+            if [ "${#hmlogs[@]}" -eq 0 ]; then
+              echo "no ib_hm.log found under /etc/incredibuild/log"
+              find /etc/incredibuild/log -maxdepth 3 -type f 2>/dev/null | head -20
+            fi
           else
-            echo "no logfile at $log (may be inside ib_console sandbox)"
+            echo "/etc/incredibuild/log does not exist"
           fi
           echo "=== IB cache directory state AFTER this job ==="
           for d in /etc/incredibuild/cache/build_cache/shared /etc/incredibuild/cache/build_cache/builds; do
             if [ -d "$d" ]; then
               echo "--- $d ---"
               du -sh "$d" 2>/dev/null || true
-              echo "manifest files:"
-              find "$d" -name 'manifest.json' 2>/dev/null | wc -l
-              echo "tar artifacts:"
-              find "$d" -name '*.tar' 2>/dev/null | wc -l
-              echo "statistics file:"
-              cat "$d/statistics" 2>/dev/null || echo "no statistics file"
+              tar_count=$(find "$d" -name '*.tar' 2>/dev/null | wc -l)
+              echo "tar artifacts: $tar_count"
             fi
           done
-          # Try to surface per-build stats via the bundled script.
-          # show_build_cache_statistics.sh needs a buildId — try recent ones.
-          if [ -d /etc/incredibuild/db ]; then
-            recent_db=$(ls -t /etc/incredibuild/db/incredibuildBuildReport_*.db 2>/dev/null | head -1)
-            if [ -n "$recent_db" ]; then
-              buildId=$(basename "$recent_db" | sed -E 's/incredibuildBuildReport_(.+)\.db/\1/')
-              echo "--- show_build_cache_statistics.sh $buildId ---"
-              /opt/incredibuild/bin/show_build_cache_statistics.sh "$buildId" 2>&1 | head -20 || true
-            fi
-          fi
 
   test-python-coverage:
     runs-on: incredibuild-runner
@@ -422,41 +420,39 @@ jobs:
         if: always()
         run: |
           set +e
-          log="${RUNNER_TEMP:-/tmp}/ib_cache.log"
-          echo "=== IB cache logfile: $log ==="
-          if [ -f "$log" ]; then
-            wc -l "$log"
-            echo "--- last 200 lines ---"
-            tail -200 "$log"
-            hits=$(grep -c -iE 'cache.?hit|HIT' "$log" 2>/dev/null || echo 0)
-            misses=$(grep -c -iE 'cache.?miss|MISS' "$log" 2>/dev/null || echo 0)
-            echo "approx hits=$hits  misses=$misses"
+          echo "=== IB hit/miss logs ==="
+          # ib_console writes its hit/miss report at
+          #   /etc/incredibuild/log/YYYY-Mon-DD/local-<buildId>/ib_hm.log
+          # (path is announced in build output as
+          #   "Incredibuild System: Build Cache report is '...'").
+          # Surface the most recent few so we can see cache hits / misses
+          # for this job in the GHA log.
+          if [ -d /etc/incredibuild/log ]; then
+            mapfile -t hmlogs < <(find /etc/incredibuild/log -name ib_hm.log -printf "%T@ %p\n" 2>/dev/null | sort -rn | head -3 | cut -d" " -f2-)
+            for f in "${hmlogs[@]}"; do
+              echo "--- $f ---"
+              wc -l "$f"
+              tail -200 "$f"
+              hits=$(grep -c -iE 'HIT' "$f" 2>/dev/null || echo 0)
+              misses=$(grep -c -iE 'MISS' "$f" 2>/dev/null || echo 0)
+              echo "summary hits=$hits misses=$misses for $f"
+            done
+            if [ "${#hmlogs[@]}" -eq 0 ]; then
+              echo "no ib_hm.log found under /etc/incredibuild/log"
+              find /etc/incredibuild/log -maxdepth 3 -type f 2>/dev/null | head -20
+            fi
           else
-            echo "no logfile at $log (may be inside ib_console sandbox)"
+            echo "/etc/incredibuild/log does not exist"
           fi
           echo "=== IB cache directory state AFTER this job ==="
           for d in /etc/incredibuild/cache/build_cache/shared /etc/incredibuild/cache/build_cache/builds; do
             if [ -d "$d" ]; then
               echo "--- $d ---"
               du -sh "$d" 2>/dev/null || true
-              echo "manifest files:"
-              find "$d" -name 'manifest.json' 2>/dev/null | wc -l
-              echo "tar artifacts:"
-              find "$d" -name '*.tar' 2>/dev/null | wc -l
-              echo "statistics file:"
-              cat "$d/statistics" 2>/dev/null || echo "no statistics file"
+              tar_count=$(find "$d" -name '*.tar' 2>/dev/null | wc -l)
+              echo "tar artifacts: $tar_count"
             fi
           done
-          # Try to surface per-build stats via the bundled script.
-          # show_build_cache_statistics.sh needs a buildId — try recent ones.
-          if [ -d /etc/incredibuild/db ]; then
-            recent_db=$(ls -t /etc/incredibuild/db/incredibuildBuildReport_*.db 2>/dev/null | head -1)
-            if [ -n "$recent_db" ]; then
-              buildId=$(basename "$recent_db" | sed -E 's/incredibuildBuildReport_(.+)\.db/\1/')
-              echo "--- show_build_cache_statistics.sh $buildId ---"
-              /opt/incredibuild/bin/show_build_cache_statistics.sh "$buildId" 2>&1 | head -20 || true
-            fi
-          fi
 
   coverage-upload:
     runs-on: ubuntu-latest
@@ -602,41 +598,39 @@ jobs:
         if: always()
         run: |
           set +e
-          log="${RUNNER_TEMP:-/tmp}/ib_cache.log"
-          echo "=== IB cache logfile: $log ==="
-          if [ -f "$log" ]; then
-            wc -l "$log"
-            echo "--- last 200 lines ---"
-            tail -200 "$log"
-            hits=$(grep -c -iE 'cache.?hit|HIT' "$log" 2>/dev/null || echo 0)
-            misses=$(grep -c -iE 'cache.?miss|MISS' "$log" 2>/dev/null || echo 0)
-            echo "approx hits=$hits  misses=$misses"
+          echo "=== IB hit/miss logs ==="
+          # ib_console writes its hit/miss report at
+          #   /etc/incredibuild/log/YYYY-Mon-DD/local-<buildId>/ib_hm.log
+          # (path is announced in build output as
+          #   "Incredibuild System: Build Cache report is '...'").
+          # Surface the most recent few so we can see cache hits / misses
+          # for this job in the GHA log.
+          if [ -d /etc/incredibuild/log ]; then
+            mapfile -t hmlogs < <(find /etc/incredibuild/log -name ib_hm.log -printf "%T@ %p\n" 2>/dev/null | sort -rn | head -3 | cut -d" " -f2-)
+            for f in "${hmlogs[@]}"; do
+              echo "--- $f ---"
+              wc -l "$f"
+              tail -200 "$f"
+              hits=$(grep -c -iE 'HIT' "$f" 2>/dev/null || echo 0)
+              misses=$(grep -c -iE 'MISS' "$f" 2>/dev/null || echo 0)
+              echo "summary hits=$hits misses=$misses for $f"
+            done
+            if [ "${#hmlogs[@]}" -eq 0 ]; then
+              echo "no ib_hm.log found under /etc/incredibuild/log"
+              find /etc/incredibuild/log -maxdepth 3 -type f 2>/dev/null | head -20
+            fi
           else
-            echo "no logfile at $log (may be inside ib_console sandbox)"
+            echo "/etc/incredibuild/log does not exist"
           fi
           echo "=== IB cache directory state AFTER this job ==="
           for d in /etc/incredibuild/cache/build_cache/shared /etc/incredibuild/cache/build_cache/builds; do
             if [ -d "$d" ]; then
               echo "--- $d ---"
               du -sh "$d" 2>/dev/null || true
-              echo "manifest files:"
-              find "$d" -name 'manifest.json' 2>/dev/null | wc -l
-              echo "tar artifacts:"
-              find "$d" -name '*.tar' 2>/dev/null | wc -l
-              echo "statistics file:"
-              cat "$d/statistics" 2>/dev/null || echo "no statistics file"
+              tar_count=$(find "$d" -name '*.tar' 2>/dev/null | wc -l)
+              echo "tar artifacts: $tar_count"
             fi
           done
-          # Try to surface per-build stats via the bundled script.
-          # show_build_cache_statistics.sh needs a buildId — try recent ones.
-          if [ -d /etc/incredibuild/db ]; then
-            recent_db=$(ls -t /etc/incredibuild/db/incredibuildBuildReport_*.db 2>/dev/null | head -1)
-            if [ -n "$recent_db" ]; then
-              buildId=$(basename "$recent_db" | sed -E 's/incredibuildBuildReport_(.+)\.db/\1/')
-              echo "--- show_build_cache_statistics.sh $buildId ---"
-              /opt/incredibuild/bin/show_build_cache_statistics.sh "$buildId" 2>&1 | head -20 || true
-            fi
-          fi
 
   test-rust-os:
     name: test rust on ${{ matrix.os }}
@@ -783,41 +777,39 @@ jobs:
         if: always()
         run: |
           set +e
-          log="${RUNNER_TEMP:-/tmp}/ib_cache.log"
-          echo "=== IB cache logfile: $log ==="
-          if [ -f "$log" ]; then
-            wc -l "$log"
-            echo "--- last 200 lines ---"
-            tail -200 "$log"
-            hits=$(grep -c -iE 'cache.?hit|HIT' "$log" 2>/dev/null || echo 0)
-            misses=$(grep -c -iE 'cache.?miss|MISS' "$log" 2>/dev/null || echo 0)
-            echo "approx hits=$hits  misses=$misses"
+          echo "=== IB hit/miss logs ==="
+          # ib_console writes its hit/miss report at
+          #   /etc/incredibuild/log/YYYY-Mon-DD/local-<buildId>/ib_hm.log
+          # (path is announced in build output as
+          #   "Incredibuild System: Build Cache report is '...'").
+          # Surface the most recent few so we can see cache hits / misses
+          # for this job in the GHA log.
+          if [ -d /etc/incredibuild/log ]; then
+            mapfile -t hmlogs < <(find /etc/incredibuild/log -name ib_hm.log -printf "%T@ %p\n" 2>/dev/null | sort -rn | head -3 | cut -d" " -f2-)
+            for f in "${hmlogs[@]}"; do
+              echo "--- $f ---"
+              wc -l "$f"
+              tail -200 "$f"
+              hits=$(grep -c -iE 'HIT' "$f" 2>/dev/null || echo 0)
+              misses=$(grep -c -iE 'MISS' "$f" 2>/dev/null || echo 0)
+              echo "summary hits=$hits misses=$misses for $f"
+            done
+            if [ "${#hmlogs[@]}" -eq 0 ]; then
+              echo "no ib_hm.log found under /etc/incredibuild/log"
+              find /etc/incredibuild/log -maxdepth 3 -type f 2>/dev/null | head -20
+            fi
           else
-            echo "no logfile at $log (may be inside ib_console sandbox)"
+            echo "/etc/incredibuild/log does not exist"
           fi
           echo "=== IB cache directory state AFTER this job ==="
           for d in /etc/incredibuild/cache/build_cache/shared /etc/incredibuild/cache/build_cache/builds; do
             if [ -d "$d" ]; then
               echo "--- $d ---"
               du -sh "$d" 2>/dev/null || true
-              echo "manifest files:"
-              find "$d" -name 'manifest.json' 2>/dev/null | wc -l
-              echo "tar artifacts:"
-              find "$d" -name '*.tar' 2>/dev/null | wc -l
-              echo "statistics file:"
-              cat "$d/statistics" 2>/dev/null || echo "no statistics file"
+              tar_count=$(find "$d" -name '*.tar' 2>/dev/null | wc -l)
+              echo "tar artifacts: $tar_count"
             fi
           done
-          # Try to surface per-build stats via the bundled script.
-          # show_build_cache_statistics.sh needs a buildId — try recent ones.
-          if [ -d /etc/incredibuild/db ]; then
-            recent_db=$(ls -t /etc/incredibuild/db/incredibuildBuildReport_*.db 2>/dev/null | head -1)
-            if [ -n "$recent_db" ]; then
-              buildId=$(basename "$recent_db" | sed -E 's/incredibuildBuildReport_(.+)\.db/\1/')
-              echo "--- show_build_cache_statistics.sh $buildId ---"
-              /opt/incredibuild/bin/show_build_cache_statistics.sh "$buildId" 2>&1 | head -20 || true
-            fi
-          fi
 
   miri:
     runs-on: incredibuild-runner
@@ -880,41 +872,39 @@ jobs:
         if: always()
         run: |
           set +e
-          log="${RUNNER_TEMP:-/tmp}/ib_cache.log"
-          echo "=== IB cache logfile: $log ==="
-          if [ -f "$log" ]; then
-            wc -l "$log"
-            echo "--- last 200 lines ---"
-            tail -200 "$log"
-            hits=$(grep -c -iE 'cache.?hit|HIT' "$log" 2>/dev/null || echo 0)
-            misses=$(grep -c -iE 'cache.?miss|MISS' "$log" 2>/dev/null || echo 0)
-            echo "approx hits=$hits  misses=$misses"
+          echo "=== IB hit/miss logs ==="
+          # ib_console writes its hit/miss report at
+          #   /etc/incredibuild/log/YYYY-Mon-DD/local-<buildId>/ib_hm.log
+          # (path is announced in build output as
+          #   "Incredibuild System: Build Cache report is '...'").
+          # Surface the most recent few so we can see cache hits / misses
+          # for this job in the GHA log.
+          if [ -d /etc/incredibuild/log ]; then
+            mapfile -t hmlogs < <(find /etc/incredibuild/log -name ib_hm.log -printf "%T@ %p\n" 2>/dev/null | sort -rn | head -3 | cut -d" " -f2-)
+            for f in "${hmlogs[@]}"; do
+              echo "--- $f ---"
+              wc -l "$f"
+              tail -200 "$f"
+              hits=$(grep -c -iE 'HIT' "$f" 2>/dev/null || echo 0)
+              misses=$(grep -c -iE 'MISS' "$f" 2>/dev/null || echo 0)
+              echo "summary hits=$hits misses=$misses for $f"
+            done
+            if [ "${#hmlogs[@]}" -eq 0 ]; then
+              echo "no ib_hm.log found under /etc/incredibuild/log"
+              find /etc/incredibuild/log -maxdepth 3 -type f 2>/dev/null | head -20
+            fi
           else
-            echo "no logfile at $log (may be inside ib_console sandbox)"
+            echo "/etc/incredibuild/log does not exist"
           fi
           echo "=== IB cache directory state AFTER this job ==="
           for d in /etc/incredibuild/cache/build_cache/shared /etc/incredibuild/cache/build_cache/builds; do
             if [ -d "$d" ]; then
               echo "--- $d ---"
               du -sh "$d" 2>/dev/null || true
-              echo "manifest files:"
-              find "$d" -name 'manifest.json' 2>/dev/null | wc -l
-              echo "tar artifacts:"
-              find "$d" -name '*.tar' 2>/dev/null | wc -l
-              echo "statistics file:"
-              cat "$d/statistics" 2>/dev/null || echo "no statistics file"
+              tar_count=$(find "$d" -name '*.tar' 2>/dev/null | wc -l)
+              echo "tar artifacts: $tar_count"
             fi
           done
-          # Try to surface per-build stats via the bundled script.
-          # show_build_cache_statistics.sh needs a buildId — try recent ones.
-          if [ -d /etc/incredibuild/db ]; then
-            recent_db=$(ls -t /etc/incredibuild/db/incredibuildBuildReport_*.db 2>/dev/null | head -1)
-            if [ -n "$recent_db" ]; then
-              buildId=$(basename "$recent_db" | sed -E 's/incredibuildBuildReport_(.+)\.db/\1/')
-              echo "--- show_build_cache_statistics.sh $buildId ---"
-              /opt/incredibuild/bin/show_build_cache_statistics.sh "$buildId" 2>&1 | head -20 || true
-            fi
-          fi
 
   fuzz:
     name: fuzz ${{ matrix.target }}
@@ -995,41 +985,39 @@ jobs:
         if: always()
         run: |
           set +e
-          log="${RUNNER_TEMP:-/tmp}/ib_cache.log"
-          echo "=== IB cache logfile: $log ==="
-          if [ -f "$log" ]; then
-            wc -l "$log"
-            echo "--- last 200 lines ---"
-            tail -200 "$log"
-            hits=$(grep -c -iE 'cache.?hit|HIT' "$log" 2>/dev/null || echo 0)
-            misses=$(grep -c -iE 'cache.?miss|MISS' "$log" 2>/dev/null || echo 0)
-            echo "approx hits=$hits  misses=$misses"
+          echo "=== IB hit/miss logs ==="
+          # ib_console writes its hit/miss report at
+          #   /etc/incredibuild/log/YYYY-Mon-DD/local-<buildId>/ib_hm.log
+          # (path is announced in build output as
+          #   "Incredibuild System: Build Cache report is '...'").
+          # Surface the most recent few so we can see cache hits / misses
+          # for this job in the GHA log.
+          if [ -d /etc/incredibuild/log ]; then
+            mapfile -t hmlogs < <(find /etc/incredibuild/log -name ib_hm.log -printf "%T@ %p\n" 2>/dev/null | sort -rn | head -3 | cut -d" " -f2-)
+            for f in "${hmlogs[@]}"; do
+              echo "--- $f ---"
+              wc -l "$f"
+              tail -200 "$f"
+              hits=$(grep -c -iE 'HIT' "$f" 2>/dev/null || echo 0)
+              misses=$(grep -c -iE 'MISS' "$f" 2>/dev/null || echo 0)
+              echo "summary hits=$hits misses=$misses for $f"
+            done
+            if [ "${#hmlogs[@]}" -eq 0 ]; then
+              echo "no ib_hm.log found under /etc/incredibuild/log"
+              find /etc/incredibuild/log -maxdepth 3 -type f 2>/dev/null | head -20
+            fi
           else
-            echo "no logfile at $log (may be inside ib_console sandbox)"
+            echo "/etc/incredibuild/log does not exist"
           fi
           echo "=== IB cache directory state AFTER this job ==="
           for d in /etc/incredibuild/cache/build_cache/shared /etc/incredibuild/cache/build_cache/builds; do
             if [ -d "$d" ]; then
               echo "--- $d ---"
               du -sh "$d" 2>/dev/null || true
-              echo "manifest files:"
-              find "$d" -name 'manifest.json' 2>/dev/null | wc -l
-              echo "tar artifacts:"
-              find "$d" -name '*.tar' 2>/dev/null | wc -l
-              echo "statistics file:"
-              cat "$d/statistics" 2>/dev/null || echo "no statistics file"
+              tar_count=$(find "$d" -name '*.tar' 2>/dev/null | wc -l)
+              echo "tar artifacts: $tar_count"
             fi
           done
-          # Try to surface per-build stats via the bundled script.
-          # show_build_cache_statistics.sh needs a buildId — try recent ones.
-          if [ -d /etc/incredibuild/db ]; then
-            recent_db=$(ls -t /etc/incredibuild/db/incredibuildBuildReport_*.db 2>/dev/null | head -1)
-            if [ -n "$recent_db" ]; then
-              buildId=$(basename "$recent_db" | sed -E 's/incredibuildBuildReport_(.+)\.db/\1/')
-              echo "--- show_build_cache_statistics.sh $buildId ---"
-              /opt/incredibuild/bin/show_build_cache_statistics.sh "$buildId" 2>&1 | head -20 || true
-            fi
-          fi
 
   check:
     if: always()
