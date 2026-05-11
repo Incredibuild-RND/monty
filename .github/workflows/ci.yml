@@ -255,9 +255,15 @@ jobs:
       - run: rm .cargo/config.toml
 
       - name: Build and test Python bindings and run pytest with Rust coverage
+        # CARGO env is set at job level so maturin's internal cargo invocation
+        # goes through cargo-ib.sh. We call `cargo llvm-cov show-env` via
+        # plain cargo (not the wrapper) because that subcommand only emits
+        # env discovery — wrapping it would mix ib_console's "ib_server
+        # connected" stdout chatter into the output we eval, producing
+        # 'Incredibuild: command not found'.
         run: |
           set -euxo pipefail
-          eval "$(./scripts/cargo-ib.sh llvm-cov show-env --export-prefix)"
+          eval "$(cargo llvm-cov show-env --export-prefix)"
           ./scripts/cargo-ib.sh llvm-cov clean --workspace
           uv run maturin develop --uv -m crates/monty-python/Cargo.toml
           uv run --package pydantic-monty --only-dev pytest crates/monty-python/tests
