@@ -14,41 +14,56 @@
 #   <process filename="rustc" type="allow_remote" .../>
 # with NO ib_cache entry. That means rustc gets distributed across IB
 # build agents but its outputs are NOT persisted to the local build
-# cache — every run recompiles every crate from scratch. The custom
-# profile at scripts/ib-profile.xml adds
+# cache (under /etc/incredibuild/cache/build_cache/shared/). The
+# custom profile at scripts/ib-profile.xml adds
 #   <ib_cache enabled="true" />
 # to rustc so subsequent runs can replay cached compilations.
 #
-# ib_console flag rationale:
-#   --standalone               run without joining a coordinator
-#   --build-cache-local-shared use the runner-local shared cache
-#   --build-cache-force        force-fill the cache even on the first run
-#   --build-cache-basedir=PWD  scope the cache key to the workspace root
-#                              (paths inside PWD become a placeholder so
-#                              cached artifacts are portable across runs
-#                              in different workspace dirs)
-#   --build-cache-local-logfile=...     append hit/miss/info log lines
-#   --build-cache-report-all-miss       summarize every miss reason
-#   --profile=scripts/ib-profile.xml    enable rustc ib_cache (see above)
-#   --debug=build_cache                 verbose build-cache diagnostics
+# ib_console flags actually accepted by this binary (verified in
+# ib_linux:cpp/XgConsole/XgConsole_main.cpp option table):
+#   --standalone                 run without joining a coordinator
+#   --build-cache-local-shared   use the local shared cache at
+#                                /etc/incredibuild/cache/build_cache/shared/
+#   --build-cache-basedir=PWD    scope the cache key to the workspace
+#                                root (paths inside PWD become a
+#                                placeholder so cached artifacts are
+#                                portable across runs in different
+#                                workspace dirs)
+#   --build-cache-local-logfile  append hit/miss/info log lines (path
+#                                must be absolute)
+#   --build-cache-report-all-miss
+#                                summarize every miss reason
+#   --profile=...                additional profile file (loaded on
+#                                top of /opt/incredibuild/data/ib_profile.xml)
+#   --debug=build_cache          verbose build-cache diagnostics
+#
+# Flags that do NOT exist in this version (do not pass them, they are
+# silently ignored): --build-cache-force.
 
 set -euo pipefail
 
+# Expose IB's shared cargo target dir at the workspace's ./target/
+# location BEFORE running cargo. If a prior cargo run on this runner
+# created the IB target dir, symlink to it so subsequent builds
+# benefit (without breaking jobs that already have a target/ dir from
+# Swatinem/rust-cache).
 IB_TARGET="${IB_CARGO_TARGET_DIR:-/ib-workspace/cache/cargo-target}"
 if [ -d "$IB_TARGET" ] && [ ! -e "$PWD/target" ]; then
     ln -s "$IB_TARGET" "$PWD/target"
     echo "cargo-ib: $PWD/target -> $IB_TARGET"
 fi
 
-# Per-job IB diagnostic log path. The workflow can `cat` this at the
-# end of a job to surface cache hit/miss counts in the run summary.
+# Per-job IB diagnostic log path. Must be ABSOLUTE per ib_console
+# validation. ib_console may run intercepted processes in a chroot /
+# namespace (tools/deployment/ib_console_chroot, ib_console_ns), so a
+# path under RUNNER_TEMP may not be visible inside the sandbox. We
+# still try, and the workflow's post-flight step also inspects the
+# canonical cache dir at /etc/incredibuild/cache/build_cache/shared/.
 IB_CACHE_LOG="${IB_CACHE_LOG:-${RUNNER_TEMP:-/tmp}/ib_cache.log}"
 IB_PROFILE="${IB_PROFILE:-$PWD/scripts/ib-profile.xml}"
 export IB_CACHE_LOG IB_PROFILE
 
 if [ -x /usr/bin/ib_console ]; then
-    # Sanity-print profile location/age on first invocation so the build
-    # log makes it obvious which profile is in effect.
     if [ -f "$IB_PROFILE" ]; then
         echo "cargo-ib: using IB profile $IB_PROFILE"
     else
@@ -59,7 +74,6 @@ if [ -x /usr/bin/ib_console ]; then
     set -- \
         --standalone \
         --build-cache-local-shared \
-        --build-cache-force \
         --build-cache-basedir="$PWD" \
         --build-cache-local-logfile="$IB_CACHE_LOG" \
         --build-cache-report-all-miss \

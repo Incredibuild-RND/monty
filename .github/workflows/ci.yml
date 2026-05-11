@@ -57,9 +57,22 @@ jobs:
         if: always()
         run: |
           set +e
+          echo "=== ib_console availability ==="
           which ib_console || echo "no ib_console on PATH"
           /usr/bin/ib_console --version 2>&1 | head -5 || true
-          ls -la scripts/ib-profile.xml || true
+          echo "=== IB cache directory state BEFORE this job ==="
+          for d in /etc/incredibuild/cache/build_cache/shared /etc/incredibuild/cache/build_cache/builds /etc/incredibuild/db; do
+            if [ -d "$d" ]; then
+              echo "--- $d ---"
+              du -sh "$d" 2>/dev/null || true
+              find "$d" -maxdepth 2 -type d 2>/dev/null | head -10
+              find "$d" -maxdepth 3 -type f 2>/dev/null | wc -l | awk "{print \"files:\", \$1}"
+            else
+              echo "$d does not exist"
+            fi
+          done
+          echo "=== profile + wrapper presence ==="
+          ls -la scripts/ib-profile.xml scripts/cargo-ib.sh || true
 
       # no release versioning, see https://github.com/dtolnay/rust-toolchain/issues/180
       - uses: dtolnay/rust-toolchain@efa25f7f19611383d5b0ccf2d1c8914531636bf9
@@ -143,18 +156,22 @@ jobs:
         if: always()
         run: |
           set +e
+          echo "=== ib_console availability ==="
           which ib_console || echo "no ib_console on PATH"
           /usr/bin/ib_console --version 2>&1 | head -5 || true
-          if [ -x /usr/bin/ib_console ]; then
-            /usr/bin/ib_console --build-cache-local-dir --build-cache-local-shared 2>&1 | head -5
-            cache_dir=$(/usr/bin/ib_console --build-cache-local-dir --build-cache-local-shared 2>/dev/null | tail -1 | tr -d '\n')
-            if [ -n "$cache_dir" ] && [ -d "$cache_dir" ]; then
-              echo "cache dir: $cache_dir"
-              du -sh "$cache_dir" 2>/dev/null || true
-              ls "$cache_dir" 2>/dev/null | head -10 || true
+          echo "=== IB cache directory state BEFORE this job ==="
+          for d in /etc/incredibuild/cache/build_cache/shared /etc/incredibuild/cache/build_cache/builds /etc/incredibuild/db; do
+            if [ -d "$d" ]; then
+              echo "--- $d ---"
+              du -sh "$d" 2>/dev/null || true
+              find "$d" -maxdepth 2 -type d 2>/dev/null | head -10
+              find "$d" -maxdepth 3 -type f 2>/dev/null | wc -l | awk "{print \"files:\", \$1}"
+            else
+              echo "$d does not exist"
             fi
-          fi
-          ls -la scripts/ib-profile.xml || true
+          done
+          echo "=== profile + wrapper presence ==="
+          ls -la scripts/ib-profile.xml scripts/cargo-ib.sh || true
       # no release versioning, see https://github.com/dtolnay/rust-toolchain/issues/180
       - uses: dtolnay/rust-toolchain@efa25f7f19611383d5b0ccf2d1c8914531636bf9
         with:
@@ -253,12 +270,34 @@ jobs:
             wc -l "$log"
             echo "--- last 200 lines ---"
             tail -200 "$log"
-            echo "--- hit/miss summary (grep-based) ---"
             hits=$(grep -c -iE 'cache.?hit|HIT' "$log" 2>/dev/null || echo 0)
             misses=$(grep -c -iE 'cache.?miss|MISS' "$log" 2>/dev/null || echo 0)
             echo "approx hits=$hits  misses=$misses"
           else
-            echo "no cache log produced"
+            echo "no logfile at $log (may be inside ib_console sandbox)"
+          fi
+          echo "=== IB cache directory state AFTER this job ==="
+          for d in /etc/incredibuild/cache/build_cache/shared /etc/incredibuild/cache/build_cache/builds; do
+            if [ -d "$d" ]; then
+              echo "--- $d ---"
+              du -sh "$d" 2>/dev/null || true
+              echo "manifest files:"
+              find "$d" -name 'manifest.json' 2>/dev/null | wc -l
+              echo "tar artifacts:"
+              find "$d" -name '*.tar' 2>/dev/null | wc -l
+              echo "statistics file:"
+              cat "$d/statistics" 2>/dev/null || echo "no statistics file"
+            fi
+          done
+          # Try to surface per-build stats via the bundled script.
+          # show_build_cache_statistics.sh needs a buildId — try recent ones.
+          if [ -d /etc/incredibuild/db ]; then
+            recent_db=$(ls -t /etc/incredibuild/db/incredibuildBuildReport_*.db 2>/dev/null | head -1)
+            if [ -n "$recent_db" ]; then
+              buildId=$(basename "$recent_db" | sed -E 's/incredibuildBuildReport_(.+)\.db/\1/')
+              echo "--- show_build_cache_statistics.sh $buildId ---"
+              /opt/incredibuild/bin/show_build_cache_statistics.sh "$buildId" 2>&1 | head -20 || true
+            fi
           fi
 
   test-python-coverage:
@@ -285,18 +324,22 @@ jobs:
         if: always()
         run: |
           set +e
+          echo "=== ib_console availability ==="
           which ib_console || echo "no ib_console on PATH"
           /usr/bin/ib_console --version 2>&1 | head -5 || true
-          if [ -x /usr/bin/ib_console ]; then
-            /usr/bin/ib_console --build-cache-local-dir --build-cache-local-shared 2>&1 | head -5
-            cache_dir=$(/usr/bin/ib_console --build-cache-local-dir --build-cache-local-shared 2>/dev/null | tail -1 | tr -d '\n')
-            if [ -n "$cache_dir" ] && [ -d "$cache_dir" ]; then
-              echo "cache dir: $cache_dir"
-              du -sh "$cache_dir" 2>/dev/null || true
-              ls "$cache_dir" 2>/dev/null | head -10 || true
+          echo "=== IB cache directory state BEFORE this job ==="
+          for d in /etc/incredibuild/cache/build_cache/shared /etc/incredibuild/cache/build_cache/builds /etc/incredibuild/db; do
+            if [ -d "$d" ]; then
+              echo "--- $d ---"
+              du -sh "$d" 2>/dev/null || true
+              find "$d" -maxdepth 2 -type d 2>/dev/null | head -10
+              find "$d" -maxdepth 3 -type f 2>/dev/null | wc -l | awk "{print \"files:\", \$1}"
+            else
+              echo "$d does not exist"
             fi
-          fi
-          ls -la scripts/ib-profile.xml || true
+          done
+          echo "=== profile + wrapper presence ==="
+          ls -la scripts/ib-profile.xml scripts/cargo-ib.sh || true
 
       # no release versioning, see https://github.com/dtolnay/rust-toolchain/issues/180
       - uses: dtolnay/rust-toolchain@efa25f7f19611383d5b0ccf2d1c8914531636bf9
@@ -385,12 +428,34 @@ jobs:
             wc -l "$log"
             echo "--- last 200 lines ---"
             tail -200 "$log"
-            echo "--- hit/miss summary (grep-based) ---"
             hits=$(grep -c -iE 'cache.?hit|HIT' "$log" 2>/dev/null || echo 0)
             misses=$(grep -c -iE 'cache.?miss|MISS' "$log" 2>/dev/null || echo 0)
             echo "approx hits=$hits  misses=$misses"
           else
-            echo "no cache log produced"
+            echo "no logfile at $log (may be inside ib_console sandbox)"
+          fi
+          echo "=== IB cache directory state AFTER this job ==="
+          for d in /etc/incredibuild/cache/build_cache/shared /etc/incredibuild/cache/build_cache/builds; do
+            if [ -d "$d" ]; then
+              echo "--- $d ---"
+              du -sh "$d" 2>/dev/null || true
+              echo "manifest files:"
+              find "$d" -name 'manifest.json' 2>/dev/null | wc -l
+              echo "tar artifacts:"
+              find "$d" -name '*.tar' 2>/dev/null | wc -l
+              echo "statistics file:"
+              cat "$d/statistics" 2>/dev/null || echo "no statistics file"
+            fi
+          done
+          # Try to surface per-build stats via the bundled script.
+          # show_build_cache_statistics.sh needs a buildId — try recent ones.
+          if [ -d /etc/incredibuild/db ]; then
+            recent_db=$(ls -t /etc/incredibuild/db/incredibuildBuildReport_*.db 2>/dev/null | head -1)
+            if [ -n "$recent_db" ]; then
+              buildId=$(basename "$recent_db" | sed -E 's/incredibuildBuildReport_(.+)\.db/\1/')
+              echo "--- show_build_cache_statistics.sh $buildId ---"
+              /opt/incredibuild/bin/show_build_cache_statistics.sh "$buildId" 2>&1 | head -20 || true
+            fi
           fi
 
   coverage-upload:
@@ -469,18 +534,22 @@ jobs:
         if: always()
         run: |
           set +e
+          echo "=== ib_console availability ==="
           which ib_console || echo "no ib_console on PATH"
           /usr/bin/ib_console --version 2>&1 | head -5 || true
-          if [ -x /usr/bin/ib_console ]; then
-            /usr/bin/ib_console --build-cache-local-dir --build-cache-local-shared 2>&1 | head -5
-            cache_dir=$(/usr/bin/ib_console --build-cache-local-dir --build-cache-local-shared 2>/dev/null | tail -1 | tr -d '\n')
-            if [ -n "$cache_dir" ] && [ -d "$cache_dir" ]; then
-              echo "cache dir: $cache_dir"
-              du -sh "$cache_dir" 2>/dev/null || true
-              ls "$cache_dir" 2>/dev/null | head -10 || true
+          echo "=== IB cache directory state BEFORE this job ==="
+          for d in /etc/incredibuild/cache/build_cache/shared /etc/incredibuild/cache/build_cache/builds /etc/incredibuild/db; do
+            if [ -d "$d" ]; then
+              echo "--- $d ---"
+              du -sh "$d" 2>/dev/null || true
+              find "$d" -maxdepth 2 -type d 2>/dev/null | head -10
+              find "$d" -maxdepth 3 -type f 2>/dev/null | wc -l | awk "{print \"files:\", \$1}"
+            else
+              echo "$d does not exist"
             fi
-          fi
-          ls -la scripts/ib-profile.xml || true
+          done
+          echo "=== profile + wrapper presence ==="
+          ls -la scripts/ib-profile.xml scripts/cargo-ib.sh || true
 
       # no release versioning, see https://github.com/dtolnay/rust-toolchain/issues/180
       - uses: dtolnay/rust-toolchain@efa25f7f19611383d5b0ccf2d1c8914531636bf9
@@ -539,12 +608,34 @@ jobs:
             wc -l "$log"
             echo "--- last 200 lines ---"
             tail -200 "$log"
-            echo "--- hit/miss summary (grep-based) ---"
             hits=$(grep -c -iE 'cache.?hit|HIT' "$log" 2>/dev/null || echo 0)
             misses=$(grep -c -iE 'cache.?miss|MISS' "$log" 2>/dev/null || echo 0)
             echo "approx hits=$hits  misses=$misses"
           else
-            echo "no cache log produced"
+            echo "no logfile at $log (may be inside ib_console sandbox)"
+          fi
+          echo "=== IB cache directory state AFTER this job ==="
+          for d in /etc/incredibuild/cache/build_cache/shared /etc/incredibuild/cache/build_cache/builds; do
+            if [ -d "$d" ]; then
+              echo "--- $d ---"
+              du -sh "$d" 2>/dev/null || true
+              echo "manifest files:"
+              find "$d" -name 'manifest.json' 2>/dev/null | wc -l
+              echo "tar artifacts:"
+              find "$d" -name '*.tar' 2>/dev/null | wc -l
+              echo "statistics file:"
+              cat "$d/statistics" 2>/dev/null || echo "no statistics file"
+            fi
+          done
+          # Try to surface per-build stats via the bundled script.
+          # show_build_cache_statistics.sh needs a buildId — try recent ones.
+          if [ -d /etc/incredibuild/db ]; then
+            recent_db=$(ls -t /etc/incredibuild/db/incredibuildBuildReport_*.db 2>/dev/null | head -1)
+            if [ -n "$recent_db" ]; then
+              buildId=$(basename "$recent_db" | sed -E 's/incredibuildBuildReport_(.+)\.db/\1/')
+              echo "--- show_build_cache_statistics.sh $buildId ---"
+              /opt/incredibuild/bin/show_build_cache_statistics.sh "$buildId" 2>&1 | head -20 || true
+            fi
           fi
 
   test-rust-os:
@@ -613,18 +704,22 @@ jobs:
         if: always()
         run: |
           set +e
+          echo "=== ib_console availability ==="
           which ib_console || echo "no ib_console on PATH"
           /usr/bin/ib_console --version 2>&1 | head -5 || true
-          if [ -x /usr/bin/ib_console ]; then
-            /usr/bin/ib_console --build-cache-local-dir --build-cache-local-shared 2>&1 | head -5
-            cache_dir=$(/usr/bin/ib_console --build-cache-local-dir --build-cache-local-shared 2>/dev/null | tail -1 | tr -d '\n')
-            if [ -n "$cache_dir" ] && [ -d "$cache_dir" ]; then
-              echo "cache dir: $cache_dir"
-              du -sh "$cache_dir" 2>/dev/null || true
-              ls "$cache_dir" 2>/dev/null | head -10 || true
+          echo "=== IB cache directory state BEFORE this job ==="
+          for d in /etc/incredibuild/cache/build_cache/shared /etc/incredibuild/cache/build_cache/builds /etc/incredibuild/db; do
+            if [ -d "$d" ]; then
+              echo "--- $d ---"
+              du -sh "$d" 2>/dev/null || true
+              find "$d" -maxdepth 2 -type d 2>/dev/null | head -10
+              find "$d" -maxdepth 3 -type f 2>/dev/null | wc -l | awk "{print \"files:\", \$1}"
+            else
+              echo "$d does not exist"
             fi
-          fi
-          ls -la scripts/ib-profile.xml || true
+          done
+          echo "=== profile + wrapper presence ==="
+          ls -la scripts/ib-profile.xml scripts/cargo-ib.sh || true
       # no release versioning, see https://github.com/dtolnay/rust-toolchain/issues/180
       - uses: dtolnay/rust-toolchain@efa25f7f19611383d5b0ccf2d1c8914531636bf9
         with:
@@ -694,12 +789,34 @@ jobs:
             wc -l "$log"
             echo "--- last 200 lines ---"
             tail -200 "$log"
-            echo "--- hit/miss summary (grep-based) ---"
             hits=$(grep -c -iE 'cache.?hit|HIT' "$log" 2>/dev/null || echo 0)
             misses=$(grep -c -iE 'cache.?miss|MISS' "$log" 2>/dev/null || echo 0)
             echo "approx hits=$hits  misses=$misses"
           else
-            echo "no cache log produced"
+            echo "no logfile at $log (may be inside ib_console sandbox)"
+          fi
+          echo "=== IB cache directory state AFTER this job ==="
+          for d in /etc/incredibuild/cache/build_cache/shared /etc/incredibuild/cache/build_cache/builds; do
+            if [ -d "$d" ]; then
+              echo "--- $d ---"
+              du -sh "$d" 2>/dev/null || true
+              echo "manifest files:"
+              find "$d" -name 'manifest.json' 2>/dev/null | wc -l
+              echo "tar artifacts:"
+              find "$d" -name '*.tar' 2>/dev/null | wc -l
+              echo "statistics file:"
+              cat "$d/statistics" 2>/dev/null || echo "no statistics file"
+            fi
+          done
+          # Try to surface per-build stats via the bundled script.
+          # show_build_cache_statistics.sh needs a buildId — try recent ones.
+          if [ -d /etc/incredibuild/db ]; then
+            recent_db=$(ls -t /etc/incredibuild/db/incredibuildBuildReport_*.db 2>/dev/null | head -1)
+            if [ -n "$recent_db" ]; then
+              buildId=$(basename "$recent_db" | sed -E 's/incredibuildBuildReport_(.+)\.db/\1/')
+              echo "--- show_build_cache_statistics.sh $buildId ---"
+              /opt/incredibuild/bin/show_build_cache_statistics.sh "$buildId" 2>&1 | head -20 || true
+            fi
           fi
 
   miri:
@@ -726,18 +843,22 @@ jobs:
         if: always()
         run: |
           set +e
+          echo "=== ib_console availability ==="
           which ib_console || echo "no ib_console on PATH"
           /usr/bin/ib_console --version 2>&1 | head -5 || true
-          if [ -x /usr/bin/ib_console ]; then
-            /usr/bin/ib_console --build-cache-local-dir --build-cache-local-shared 2>&1 | head -5
-            cache_dir=$(/usr/bin/ib_console --build-cache-local-dir --build-cache-local-shared 2>/dev/null | tail -1 | tr -d '\n')
-            if [ -n "$cache_dir" ] && [ -d "$cache_dir" ]; then
-              echo "cache dir: $cache_dir"
-              du -sh "$cache_dir" 2>/dev/null || true
-              ls "$cache_dir" 2>/dev/null | head -10 || true
+          echo "=== IB cache directory state BEFORE this job ==="
+          for d in /etc/incredibuild/cache/build_cache/shared /etc/incredibuild/cache/build_cache/builds /etc/incredibuild/db; do
+            if [ -d "$d" ]; then
+              echo "--- $d ---"
+              du -sh "$d" 2>/dev/null || true
+              find "$d" -maxdepth 2 -type d 2>/dev/null | head -10
+              find "$d" -maxdepth 3 -type f 2>/dev/null | wc -l | awk "{print \"files:\", \$1}"
+            else
+              echo "$d does not exist"
             fi
-          fi
-          ls -la scripts/ib-profile.xml || true
+          done
+          echo "=== profile + wrapper presence ==="
+          ls -la scripts/ib-profile.xml scripts/cargo-ib.sh || true
       # no release versioning, see https://github.com/dtolnay/rust-toolchain/issues/180
       - uses: dtolnay/rust-toolchain@efa25f7f19611383d5b0ccf2d1c8914531636bf9
         with:
@@ -765,12 +886,34 @@ jobs:
             wc -l "$log"
             echo "--- last 200 lines ---"
             tail -200 "$log"
-            echo "--- hit/miss summary (grep-based) ---"
             hits=$(grep -c -iE 'cache.?hit|HIT' "$log" 2>/dev/null || echo 0)
             misses=$(grep -c -iE 'cache.?miss|MISS' "$log" 2>/dev/null || echo 0)
             echo "approx hits=$hits  misses=$misses"
           else
-            echo "no cache log produced"
+            echo "no logfile at $log (may be inside ib_console sandbox)"
+          fi
+          echo "=== IB cache directory state AFTER this job ==="
+          for d in /etc/incredibuild/cache/build_cache/shared /etc/incredibuild/cache/build_cache/builds; do
+            if [ -d "$d" ]; then
+              echo "--- $d ---"
+              du -sh "$d" 2>/dev/null || true
+              echo "manifest files:"
+              find "$d" -name 'manifest.json' 2>/dev/null | wc -l
+              echo "tar artifacts:"
+              find "$d" -name '*.tar' 2>/dev/null | wc -l
+              echo "statistics file:"
+              cat "$d/statistics" 2>/dev/null || echo "no statistics file"
+            fi
+          done
+          # Try to surface per-build stats via the bundled script.
+          # show_build_cache_statistics.sh needs a buildId — try recent ones.
+          if [ -d /etc/incredibuild/db ]; then
+            recent_db=$(ls -t /etc/incredibuild/db/incredibuildBuildReport_*.db 2>/dev/null | head -1)
+            if [ -n "$recent_db" ]; then
+              buildId=$(basename "$recent_db" | sed -E 's/incredibuildBuildReport_(.+)\.db/\1/')
+              echo "--- show_build_cache_statistics.sh $buildId ---"
+              /opt/incredibuild/bin/show_build_cache_statistics.sh "$buildId" 2>&1 | head -20 || true
+            fi
           fi
 
   fuzz:
@@ -806,18 +949,22 @@ jobs:
         if: always()
         run: |
           set +e
+          echo "=== ib_console availability ==="
           which ib_console || echo "no ib_console on PATH"
           /usr/bin/ib_console --version 2>&1 | head -5 || true
-          if [ -x /usr/bin/ib_console ]; then
-            /usr/bin/ib_console --build-cache-local-dir --build-cache-local-shared 2>&1 | head -5
-            cache_dir=$(/usr/bin/ib_console --build-cache-local-dir --build-cache-local-shared 2>/dev/null | tail -1 | tr -d '\n')
-            if [ -n "$cache_dir" ] && [ -d "$cache_dir" ]; then
-              echo "cache dir: $cache_dir"
-              du -sh "$cache_dir" 2>/dev/null || true
-              ls "$cache_dir" 2>/dev/null | head -10 || true
+          echo "=== IB cache directory state BEFORE this job ==="
+          for d in /etc/incredibuild/cache/build_cache/shared /etc/incredibuild/cache/build_cache/builds /etc/incredibuild/db; do
+            if [ -d "$d" ]; then
+              echo "--- $d ---"
+              du -sh "$d" 2>/dev/null || true
+              find "$d" -maxdepth 2 -type d 2>/dev/null | head -10
+              find "$d" -maxdepth 3 -type f 2>/dev/null | wc -l | awk "{print \"files:\", \$1}"
+            else
+              echo "$d does not exist"
             fi
-          fi
-          ls -la scripts/ib-profile.xml || true
+          done
+          echo "=== profile + wrapper presence ==="
+          ls -la scripts/ib-profile.xml scripts/cargo-ib.sh || true
       # no release versioning, see https://github.com/dtolnay/rust-toolchain/issues/180
       - uses: dtolnay/rust-toolchain@efa25f7f19611383d5b0ccf2d1c8914531636bf9
         with:
@@ -854,12 +1001,34 @@ jobs:
             wc -l "$log"
             echo "--- last 200 lines ---"
             tail -200 "$log"
-            echo "--- hit/miss summary (grep-based) ---"
             hits=$(grep -c -iE 'cache.?hit|HIT' "$log" 2>/dev/null || echo 0)
             misses=$(grep -c -iE 'cache.?miss|MISS' "$log" 2>/dev/null || echo 0)
             echo "approx hits=$hits  misses=$misses"
           else
-            echo "no cache log produced"
+            echo "no logfile at $log (may be inside ib_console sandbox)"
+          fi
+          echo "=== IB cache directory state AFTER this job ==="
+          for d in /etc/incredibuild/cache/build_cache/shared /etc/incredibuild/cache/build_cache/builds; do
+            if [ -d "$d" ]; then
+              echo "--- $d ---"
+              du -sh "$d" 2>/dev/null || true
+              echo "manifest files:"
+              find "$d" -name 'manifest.json' 2>/dev/null | wc -l
+              echo "tar artifacts:"
+              find "$d" -name '*.tar' 2>/dev/null | wc -l
+              echo "statistics file:"
+              cat "$d/statistics" 2>/dev/null || echo "no statistics file"
+            fi
+          done
+          # Try to surface per-build stats via the bundled script.
+          # show_build_cache_statistics.sh needs a buildId — try recent ones.
+          if [ -d /etc/incredibuild/db ]; then
+            recent_db=$(ls -t /etc/incredibuild/db/incredibuildBuildReport_*.db 2>/dev/null | head -1)
+            if [ -n "$recent_db" ]; then
+              buildId=$(basename "$recent_db" | sed -E 's/incredibuildBuildReport_(.+)\.db/\1/')
+              echo "--- show_build_cache_statistics.sh $buildId ---"
+              /opt/incredibuild/bin/show_build_cache_statistics.sh "$buildId" 2>&1 | head -20 || true
+            fi
           fi
 
   check:
