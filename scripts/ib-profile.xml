@@ -29,15 +29,15 @@
       from the system default and re-stating them would shadow
       cached="true" if we ever forgot to copy it.
 
-    EXCLUDE_ARGS:
-      - --version, -vV are diagnostic and shouldn't pollute keys.
-      - build_script_build / build_script_main are cargo's compiled
+    EXCLUDE_ARGS (see attribute on the rustc process below):
+      * version flags are diagnostic and shouldn't pollute keys.
+      * build_script_build / build_script_main are cargo's compiled
         build scripts, which have side effects (env probes, fs
         writes) and are non-deterministic across runs. Leaving these
         cacheable would risk silent staleness.
       Identical to the system default's rustc rule.
 
-    Note: XML comments may not contain a double-hyphen, so this file
+    Note: XML comments may not contain a double hyphen, so this file
     spells command-line flags without the leading dashes when needed.
 -->
 <ib_profile version="1">
