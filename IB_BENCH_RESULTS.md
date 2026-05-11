@@ -52,6 +52,15 @@ If you are reviewing this for the first time, read **TL;DR for Sam**, the
    else (workflow, scripts, summarizer, profile fix) is in place and
    green.
 
+6. **Python jobs are deliberately NOT wrapped in `ib_console`** —
+   `pytest`, `uv run`, the top-level `maturin develop` driver, and
+   `prek`/`ruff`/`mypy` get zero cache value and would only pay
+   ib_console's startup cost. The cargo subprocess that `maturin`
+   shells out to *is* wrapped (via `CARGO=$WORKSPACE/scripts/cargo-ib.sh`
+   at the job env) so the rustc cache pays off for the heavy compile.
+   Full reasoning grounded in `ib_linux:cpp/BuildCache/BuildCache_Rules.cpp`
+   in the new "Python and `ib_console`" section below.
+
 ---
 
 ## What changed in this PR
@@ -247,6 +256,88 @@ Bench infrastructure is at:
 - `scripts/ib-bench-summarize.py`
 - `scripts/ib-profile.xml` (the one-knob profile)
 - `scripts/cargo-ib.sh` (the wrapper)
+
+---
+
+## Python and `ib_console` — when does it make sense?
+
+The first instinct when looking at `monty`'s CI is "we have Python
+jobs too — should we route those through `ib_console` for a wider
+cache hit?". The answer for this repo is **no, except for the cargo
+subprocess that maturin shells out to — which we already handle**.
+Reasoning grounded in `ib_linux` source:
+
+### What `ib_console`'s cache actually keys on
+
+From `cpp/BuildCache/BuildCache_Rules.cpp` and the `Manifest`/`Replay`
+machinery in `BuildCache_BuildCache.cpp`, the cache fingerprint is:
+
+1. process name (matched against an `<ib_profile>` `<process>` rule
+   that opts it in with `<ib_cache enabled="true"/>`),
+2. argv tokens (filtered by `exclude_args`),
+3. environment subset,
+4. **content hashes of files referenced literally on argv** (or, for
+   rustc, files referenced inside the `@response.rsp` argument — that
+   is the special-case branch keyed off process name `"rustc"` that
+   does the `/.ib.basedir.placeholder` rewrite).
+
+What `ib_console` does **not** track: arbitrary `open()` syscalls,
+Python `import` resolutions, dlopen of shared libraries, network
+requests, or anything else that the wrapped process does at runtime
+that isn't visible on its argv. There is no `LD_PRELOAD` import
+hooking; there is no Python-import-graph awareness. This is the right
+choice for a build-cache (compilers state their inputs cleanly via
+argv and `.rsp` files); it is the wrong shape for an interpreter.
+
+### Walking through every Python touch-point in monty CI
+
+| Job step / process | Wrap in `ib_console`? | Why |
+|---|---|---|
+| `uv sync --all-packages --only-dev` | **No** | PyPI download + dependency resolution + wheel install. uv's own cache is the right cache here. ib_console can't fingerprint network I/O. |
+| `uv run maturin develop --uv -m crates/monty-python/Cargo.toml` (top-level) | **No** | `maturin` is a Python binary that orchestrates a cargo subprocess and copies the resulting `.so` into the venv. The orchestration itself is fast and side-effecty. |
+| ↳ cargo subprocess that maturin shells out to | **Yes — already wired** | Heavy `rustc` work. `ci.yml::test-python-coverage` sets `CARGO=$WORKSPACE/scripts/cargo-ib.sh` at the job level; cargo respects this env var and uses our wrapper instead of `cargo` for the nested call, so the rustc cache pays off. |
+| `uv run --package pydantic-monty --only-dev pytest crates/monty-python/tests` | **No** | Test execution. Loads dynamically-imported `.py` files, conftest fixtures, plugins, runtime fs and socket activity. Not a deterministic input→output build artifact. Even if it were, ib_console can't see the import graph as part of the key. |
+| `make pytest` (in `test-python` matrix) | **No** | Same as above. The matrix runs on `ubuntu-latest` anyway. |
+| `make dev-py` / `make dev-py-release` | **No** at top level (calls maturin), **Yes** transitively for the inner cargo via `CARGO=` (only on IB jobs that set it). | Same logic: route the cargo subprocess, not the maturin driver. |
+| `prek` / `ruff` / `ruff format` / `basedpyright` / `mypy` / `codespell` / `yamlfmt` / `zizmor` | **No** | Lint hooks. Ruff is a sub-second Rust binary; mypy/basedpyright have their own (much better) incremental caches; the ib_console daemon-startup cost would dwarf the work. The `lint` job stays on `ubuntu-latest` for this reason (and to dodge the IB runner's wall-clock cap, which kills basedpyright + workspace clippy mid-run). |
+| `cargo-llvm-cov` (subcommands `clean`, `--no-report`, `report`, `report --codecov`) | **Yes** | All cargo subcommands; route through `cargo-ib.sh`. The `show-env` subcommand is the one exception — it just prints env discovery output that we `eval`, and ib_console's "ib_server connected" stdout chatter would corrupt the eval. Use plain `cargo` for `show-env` only. |
+| `cargo bench`, `cargo +nightly miri test`, `cargo fuzz run`, `cargo install` | **Yes** | All real cargo invocations. Compilation in each case is rustc work; rustc cache pays off on rebuild. Test/bench/miri/fuzz **execution** is not cached (and shouldn't be — fuzzing is nondeterministic by design, miri-run is intentionally slow interpretation). |
+| Wheel/sdist build via `PyO3/maturin-action` | **No** | These jobs run on `ubuntu-latest` (not on the IB runner) and use cross-compilation containers. Not in scope for the IB integration. |
+
+### What you would gain by wrapping pytest anyway: nothing. What it would cost: ~10–30 s per call
+
+Each `ib_console` invocation pays a fixed cost:
+- ~1–2 s daemon startup + profile parse + cache directory open.
+- Under `--standalone` we skip the 30 s "Trying to connect to
+  ib_server" timeout, so that's not in the budget. But pre-fix, every
+  IB job in this PR was paying it once at the start.
+- For a `pytest` call that itself takes ~2 s on a warm extension, the
+  overhead would dominate, and there would be **zero cache hits** on
+  the test process because it isn't declared in any profile and its
+  inputs aren't argv-visible.
+
+The current configuration (`CARGO=` env on test-python-coverage,
+plain `pytest` and plain `uv run`) is the point on the curve where
+all the cache value lives and none of the overhead does. There is
+nothing further to wire.
+
+### Could a future product change unlock more?
+
+Yes, two specific places:
+
+1. **`rustc`'s build_script_build / build_script_main** are
+   `exclude_arg`-filtered out of caching today (deliberately — they
+   have side effects). If `ib_linux` grew a "cache build scripts under
+   a sandboxed env" mode, monty would benefit because pyo3-build-config
+   et al. run on every fresh build.
+2. **A test-binary-fingerprint cache** (key by `(test_binary_hash,
+   working_dir, env_subset)`, output the test result + stdout) would
+   require profile-rule support for arbitrary executables and a way
+   to declare "this binary's outputs are deterministic given these
+   inputs". That's a real product feature, not a config knob.
+
+Both are out of scope here. Both would generalise to any Rust+Python
+repo using maturin/pyo3, not just monty, so worth keeping in mind.
 
 ---
 

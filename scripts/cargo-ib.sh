@@ -7,6 +7,31 @@
 # local dev) this falls through to plain `cargo`, so the same workflow
 # step is portable.
 #
+# SCOPE (read this before adding new call sites):
+# -----------------------------------------------
+# This wrapper invokes ONLY `cargo`. The cache it produces only pays
+# off for processes IB knows how to fingerprint via ib-profile.xml —
+# in monty that means rustc (we add it) and the C/C++ compilers
+# inherited from the system default. Do NOT pipe pytest, uv,
+# maturin's top-level driver, ruff, mypy, or python through this
+# wrapper:
+#   * `pytest`, `python`, `uv run` — interpreters whose work is
+#     dynamic .py imports and runtime side effects. ib_console hashes
+#     argv + literal-file-args, not the import graph or runtime fs
+#     reads, so the cache key would be wrong (or trivially miss).
+#   * `maturin develop` (the foreground driver) — it's a Python
+#     binary that orchestrates a cargo subprocess and copies the
+#     resulting .so into the venv. The cargo subprocess is the part
+#     worth caching; it gets routed automatically by setting
+#     `CARGO=$WORKSPACE/scripts/cargo-ib.sh` at the job level (see
+#     ci.yml::test-python-coverage). Wrapping the maturin driver
+#     itself would only add ib_console's daemon-startup overhead.
+#   * `ruff`, `mypy`, `basedpyright`, `prek` — fast linters with
+#     their own incremental caches. Wrapping them costs more than
+#     it saves.
+# Rule of thumb: if the heavy work is rustc, route through this
+# script. If the heavy work is anything else, run it directly.
+#
 # DESIGN NOTES (grounded in ib_linux source):
 # -------------------------------------------
 # Flag set is the minimum needed to produce cache hits in --standalone

@@ -175,7 +175,21 @@ jobs:
     env:
       CARGO_HOME: ${{ github.workspace }}/.cargo
       CARGO_TARGET_DIR: ${{ github.workspace }}/target
-      # Route maturin's internal cargo invocation through ib_console.
+      # Route maturin's INTERNAL cargo invocation through ib_console
+      # by the cargo `CARGO=<path>` env-var contract (cargo respects
+      # this and uses the indicated binary instead of `cargo`).
+      #
+      # Why only cargo, and not pytest / uv / maturin itself?
+      #   - The heavy work in this job is rustc (cargo build of the
+      #     pyo3 extension via maturin). Cached via the rustc entry
+      #     in scripts/ib-profile.xml.
+      #   - pytest, uv run, and maturin's top-level driver are
+      #     Python interpreters orchestrating dynamic .py imports
+      #     and venv copying. ib_console's cache key is
+      #     argv + literal-file-args, not the import graph; wrapping
+      #     these would never produce a meaningful cache hit and
+      #     would only add ib_console's startup overhead per call.
+      # See scripts/cargo-ib.sh top comment for the full rule.
       CARGO: ${{ github.workspace }}/scripts/cargo-ib.sh
       # IB runner cap mitigation, see test-rust comment.
       IB_MAX_LOCAL_CORES: '4'
