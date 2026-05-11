@@ -6,9 +6,7 @@
     type="allow_remote" but does NOT enable ib_cache for it. That means
     rustc invocations get DISTRIBUTED across the IB build network but
     their outputs are NOT persisted to the build-avoidance cache, so
-    subsequent runs re-compile the same crates from scratch even when
-    build-cache-local-shared / build-cache-force are passed on the
-    ib_console command line.
+    subsequent runs re-compile the same crates from scratch.
 
     Adding the ib_cache child element opts rustc into the same
     cache-and-replay path that gcc/clang/cc1/cc1plus already use in
@@ -18,17 +16,19 @@
     placeholder transformation (see ib_linux:cpp/BuildCache/
     BuildCache_Rules.cpp).
 
-    This profile is passed to ib_console via the profile= option, which
-    loads additively on top of the system default, so we only need to
-    declare the entries we want to override.
+    This profile is loaded additively via the ib_console profile=
+    option, on top of the system default at
+    /opt/incredibuild/data/ib_profile.xml.
 
     Note: XML comments may not contain a double-hyphen, so this file
     spells command-line flags without the leading dashes.
 -->
-<ib_profile>
-    <process filename="rustc"
-             type="allow_remote"
-             exclude_args="--version:-vV:build_script_build:build_script_main">
-        <ib_cache enabled="true" />
-    </process>
+<ib_profile version="1">
+    <processes>
+        <process filename="rustc"
+                 type="allow_remote"
+                 exclude_args="--version:-vV:build_script_build:build_script_main">
+            <ib_cache enabled="true" />
+        </process>
+    </processes>
 </ib_profile>
