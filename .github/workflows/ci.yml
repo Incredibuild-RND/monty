@@ -281,33 +281,20 @@ jobs:
 
   test-python:
     name: test python ${{ matrix.python-version }}
-    runs-on: incredibuild-runner
-    timeout-minutes: 30
+    # Kept on ubuntu-latest. 5x maturin-release compile (LTO=fat
+    # in monty's Cargo.toml) repeatedly exceeded the IB runner's
+    # ~12-min wall-clock cap; ubuntu gives a fresh runner per
+    # matrix entry so the 5 versions run in parallel under the
+    # GitHub-hosted ubuntu-latest capacity.
+    runs-on: ubuntu-latest
 
     strategy:
       fail-fast: false
-      max-parallel: 1
       matrix:
         python-version: ['3.10', '3.11', '3.12', '3.13', '3.14']
 
     env:
       UV_PYTHON: ${{ matrix.python-version }}
-      CARGO_HOME: ${{ github.workspace }}/.cargo
-      CARGO_TARGET_DIR: ${{ github.workspace }}/target
-      # maturin spawns cargo via $CARGO; route through ib_console.
-      CARGO: ${{ github.workspace }}/scripts/cargo-ib.sh
-      LANG: C.UTF-8
-      LC_ALL: C.UTF-8
-      PYTHONUTF8: '1'
-      # Disable LTO and use more codegen-units for `make dev-py-release`
-      # inside this job. The Cargo.toml release profile has lto='fat'
-      # + codegen-units=1 which is great for production wheels but
-      # pushes the maturin release compile past the IB runner's ~12-min
-      # wall-clock cap. The real LTO-built release wheels are still
-      # tested by test-builds-os/test-builds-arch which use the
-      # maturin-action Docker image, so coverage is preserved.
-      CARGO_PROFILE_RELEASE_LTO: 'false'
-      CARGO_PROFILE_RELEASE_CODEGEN_UNITS: '16'
 
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -323,39 +310,11 @@ jobs:
         with:
           lookup-only: false # zizmor: ignore[cache-poisoning] -- Job does not produce release artifacts and does not have sensitive permissions
           cache-on-failure: true
-          save-if: false # IB cache is the cache here; Swatinem post-save hangs on this runner image
       - uses: astral-sh/setup-uv@cec208311dfd045dd5311c1add060b2062131d57 # v8.0.0
         with:
           enable-cache: true # zizmor: ignore[cache-poisoning] -- Job does not produce release artifacts and does not have sensitive permissions
 
-      # setup-uv handles uv; pre-install the matrix python via uv so we can
-      # ensure libpython is discoverable for maturin's pyo3 build. Then
-      # export LIBRARY_PATH/LD_LIBRARY_PATH pointing at the real lib dir.
-      - name: Pre-install matrix Python and ensure libpython is linkable
-        run: |
-          set -euxo pipefail
-          uv python install "${UV_PYTHON}"
-          PY_BIN=$(uv python find "${UV_PYTHON}")
-          PY_PREFIX=$("${PY_BIN}" -c 'import sys; print(sys.prefix)')
-          PY_VER=$("${PY_BIN}" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')
-          echo "PY_PREFIX=$PY_PREFIX  PY_VER=$PY_VER"
-          so_link="$PY_PREFIX/lib/libpython${PY_VER}.so"
-          if [ ! -e "$so_link" ]; then
-            candidate=$(ls "$PY_PREFIX"/lib/libpython${PY_VER}*.so* 2>/dev/null | sort -r | head -1 || true)
-            if [ -n "$candidate" ]; then
-              ln -s "$(basename "$candidate")" "$so_link"
-            fi
-          fi
-          ls -la "$so_link" 2>/dev/null || ls -la "$PY_PREFIX/lib/" || true
-          {
-            echo "LIBRARY_PATH=$PY_PREFIX/lib"
-            echo "LD_LIBRARY_PATH=$PY_PREFIX/lib"
-          } >> "$GITHUB_ENV"
-
       - run: uv sync --all-packages --only-dev
-      - name: IB pre-flight
-        run: ./scripts/ib-prep.sh
-
       - run: make dev-py
       - run: make pytest
         # also test with a release build
@@ -363,10 +322,6 @@ jobs:
       - run: make pytest
         # test uv run exercise script
       - run: uv run crates/monty-python/exercise.py
-
-      - name: IB cache stats
-        if: always()
-        run: ./scripts/ib-stats.sh
 
   test-rust-os:
     name: test rust on ${{ matrix.os }}
