@@ -105,6 +105,29 @@ jobs:
         with:
           python-version: '3.14'
 
+      - name: Ensure libpython is linkable
+        # setup-python tarballs on lean self-hosted runners
+        # ship libpython3.X.so.1.0 but not the linker-discoverable
+        # libpython3.X.so symlink. pyo3-built binaries pass
+        # -lpython3.X so the linker fails without it. Recreate it.
+        run: |
+          set -euxo pipefail
+          PY_PREFIX=$(python3 -c 'import sys; print(sys.prefix)')
+          PY_VER=$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')
+          so_link="$PY_PREFIX/lib/libpython${PY_VER}.so"
+          if [ ! -e "$so_link" ]; then
+            candidate=$(ls "$PY_PREFIX"/lib/libpython${PY_VER}*.so* 2>/dev/null | sort -r | head -1 || true)
+            if [ -n "$candidate" ]; then
+              ln -s "$(basename "$candidate")" "$so_link"
+              echo "Linked $so_link -> $candidate"
+            else
+              echo "ERROR: no libpython${PY_VER}.so* found in $PY_PREFIX/lib"
+              ls -la "$PY_PREFIX/lib/" || true
+              exit 1
+            fi
+          fi
+          ls -la "$so_link"
+
       - run: rustc --version --verbose
       - run: python3 -V
         # don't use .venv python in CI
@@ -344,6 +367,29 @@ jobs:
         uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
         with:
           python-version: '3.14'
+
+      - name: Ensure libpython is linkable
+        # setup-python tarballs on lean self-hosted runners
+        # ship libpython3.X.so.1.0 but not the linker-discoverable
+        # libpython3.X.so symlink. pyo3-built binaries pass
+        # -lpython3.X so the linker fails without it. Recreate it.
+        run: |
+          set -euxo pipefail
+          PY_PREFIX=$(python3 -c 'import sys; print(sys.prefix)')
+          PY_VER=$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')
+          so_link="$PY_PREFIX/lib/libpython${PY_VER}.so"
+          if [ ! -e "$so_link" ]; then
+            candidate=$(ls "$PY_PREFIX"/lib/libpython${PY_VER}*.so* 2>/dev/null | sort -r | head -1 || true)
+            if [ -n "$candidate" ]; then
+              ln -s "$(basename "$candidate")" "$so_link"
+              echo "Linked $so_link -> $candidate"
+            else
+              echo "ERROR: no libpython${PY_VER}.so* found in $PY_PREFIX/lib"
+              ls -la "$PY_PREFIX/lib/" || true
+              exit 1
+            fi
+          fi
+          ls -la "$so_link"
 
       # don't use .venv python in CI
       - run: rm .cargo/config.toml
