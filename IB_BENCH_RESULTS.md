@@ -987,6 +987,36 @@ extended speedup table automatically.
 | + Layer E (cap bumped, lint/fuzz/test-python-coverage back on IB) | 17 of 32 (53%) |
 | + Layer G (macOS/Windows/aarch64 IB pools) | 27 of 32 (84%) |
 
+### Measured Cell H result — Layer-B end-to-end speedup (run 25727572729)
+
+| Cell | iter 1 (cold) | iter 2 (warm) | target/ size | A→cell speedup (iter≥2) |
+|---|---|---|---|---|
+| **A** ubuntu-latest, no IB | 38.6 s | 37.4 s | 2.10 GB | 1.00× |
+| **B** IB host, no rustc cache | 40.1 s | 24.8 s | 2.74 GB | 1.51× |
+| **C** IB host, custom profile, COLD | 47.9 s | — (1 iter only) | 2.74 GB | — |
+| **D** IB host, custom profile, WARM | 16.0 s | **5.27 s** | 2.24 GB | **7.10×** |
+| **H** IB **manylinux container**, ib_console | 37.7 s | **21.3 s** | 2.74 GB | **1.76×** |
+| **I** IB codspeed build, warm | 86.9 s | 71.6 s | 1.39 GB | (different workload — measures cargo codspeed build, not synthetic) |
+
+**Key finding from Cell H**: migrating a wheel-build matrix entry
+from `ubuntu-latest` (cell A baseline) to `incredibuild-runner` +
+manylinux `container:` block delivers a **1.76× speedup** on the
+synthetic `cargo test --no-run -p monty` workload — above the
+closure plan's 1.3× gate. Cell H validates Phase 8 of the closure
+plan: the existing `vnext-processing-engine` container hook bind-
+mounts `/ib-workspace` and `/opt/incredibuild` into a manylinux
+glibc-2.28 container, `ib_console` connects to the in-namespace
+`ib_server`, and `cargo` benefits from the IB cache.
+
+**Container overhead vs bare host**: Cell H_warm (21.3 s) is ~4× slower
+than Cell D_warm (5.27 s) on the SAME workload. The container's
+cargo cache keys are disjoint from the host's because it has a
+separate rustup install (`gcc-toolset-14` linker, container-local
+rustc binary path). This is a follow-up optimization: aligning the
+container's rust toolchain with the host's would close the gap, but
+even at 4× slower than host, Cell H_warm still beats `ubuntu-latest`
+no-IB by 1.76×, which is what the migration economics need.
+
 The remaining 5 of 32 are install/smoke jobs (`test-builds-arch`,
 `test-builds-os`) which compile nothing and have no IB applicability
 even in a perfect world.
