@@ -189,23 +189,52 @@ imports) so those stay on ubuntu-latest by choice, not by cap.
 
 ## Layer F — Three monty wirings (in this PR)
 
-Already committed on `ci/incredibuild-runners`:
+Status of each on `ci/incredibuild-runners`:
 
-- `.github/workflows/codspeed.yml`: `runs-on: incredibuild-runner` +
-  `CARGO=$(pwd)/scripts/cargo-ib.sh`. Codspeed builds the bench crate
-  on every PR and is one of the most-changed-rarely-rebuilt-often
-  jobs — high cache locality.
-- `.github/workflows/ci.yml::build-js`: matrix entries
+- ❌ **`.github/workflows/codspeed.yml` reverted to `ubuntu-latest`.**
+  First attempt put codspeed on IB but CI run
+  [25722680967](https://github.com/Incredibuild-RND/monty/actions/runs/25722680967)
+  reproducibly failed with `setarch: failed to set personality to
+  x86_64: Operation not permitted`. The CodSpeedHQ action shells out
+  to valgrind, which uses `setarch` to set `ADDR_NO_RANDOMIZE`
+  personality. The IB self-hosted runner image runs under restricted
+  Linux capabilities (no `SYS_ADMIN`, user-namespace remap) so the
+  personality syscall is blocked. github-hosted runners allow it.
+  Two paths to recover the IB value here: (a) hybrid — `cargo
+  codspeed build` on IB, transfer artifacts, `cargo codspeed run` on
+  ubuntu-latest; (b) ask IB ops to relax the runner image's
+  seccomp/capability profile to allow `setarch personality`. Until
+  either lands, codspeed stays on ubuntu-latest. The cache value of
+  the BUILD step is still measured in `ib-bench.yml::cell-I-ib-codspeed`
+  (which only does `cargo codspeed build`, no valgrind run).
+- ✅ **`.github/workflows/ci.yml::build-js` matrix:** entries
   `x86_64-unknown-linux-gnu` and `wasm32-wasip1-threads` switched to
-  `incredibuild-runner`. macOS/Windows/aarch64 entries kept on their
-  current runners (IB has no pool for those today).
-- Conditional IB env (`CARGO`, `IB_MAX_LOCAL_CORES`,
-  `IB_PREVENT_OVERLOAD`) and `ib-prep.sh` / `ib-stats.sh` only fire
-  when `matrix.settings.host == 'incredibuild-runner'`.
+  `incredibuild-runner`. macOS / Windows / aarch64 entries kept on
+  their current runners (IB has no pool for those today).
+- ✅ **Conditional IB env injection.** `CARGO`,
+  `IB_MAX_LOCAL_CORES`, `IB_PREVENT_OVERLOAD`, `ib-prep.sh`, and
+  `ib-stats.sh` only fire when `matrix.settings.host ==
+  'incredibuild-runner'`, so the matrix pattern stays clean.
 
-After Layer A merges, the `CARGO=$(pwd)/scripts/cargo-ib.sh` lines all
+After Layer A merges, the `CARGO=$(pwd)/scripts/cargo-ib.sh` lines
 become unnecessary — the runner image's auto-generated `cargo` shim
 takes over via `$PATH`.
+
+### New roadmap item discovered: IB runner needs `setarch personality`
+
+CodSpeed (and any other valgrind-based instrumentation, including
+profiling tools like `callgrind` and memory-error checkers like
+`memcheck`) cannot run on the IB self-hosted runner today because
+`setarch` is denied permission to set the `ADDR_NO_RANDOMIZE`
+personality. This blocks at minimum:
+- CodSpeed benchmarks (currently affecting monty)
+- valgrind-based memory-checker CI for any C/C++/Rust unsafe code
+- callgrind-based call-graph profiling
+- Any tool that uses `personality(2)` for ASLR control
+
+Suggested ask for IB ops: enable the `personality` syscall in the
+runner image's seccomp profile (or grant `CAP_SYS_ADMIN` to the
+container). Both are common settings for build runners.
 
 ---
 

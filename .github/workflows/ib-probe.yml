@@ -118,7 +118,10 @@ jobs:
     runs-on: incredibuild-runner
     timeout-minutes: 15
     container:
-      image: quay.io/pypa/manylinux_2_28_x86_64
+      # Pinned by manifest digest (zizmor unpinned-images audit). Refresh
+      # by querying https://quay.io/api/v1/repository/pypa/manylinux_2_28_x86_64?includeTags=true
+      # and reading tags.latest.manifest_digest.
+      image: quay.io/pypa/manylinux_2_28_x86_64@sha256:443eabd378e140996780a772e12c1a1ef10551da933fe76d74a1bab61f68a7b7
     steps:
       - name: probe IB visibility inside manylinux
         run: |
