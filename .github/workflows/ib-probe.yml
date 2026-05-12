@@ -18,6 +18,15 @@ name: ib-probe
 
 on:
   workflow_dispatch:
+  # Auto-run when the probe file itself changes on the integration
+  # branch, so we get a fresh diagnostic after each tuning commit.
+  # Scoped to ONLY the probe file — does NOT fire on every CI commit
+  # nor on changes to ib-bench infrastructure.
+  push:
+    branches:
+      - ci/incredibuild-runners
+    paths:
+      - .github/workflows/ib-probe.yml
 
 permissions: {}
 
