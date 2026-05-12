@@ -127,6 +127,19 @@ jobs:
           fi
           echo "::endgroup::"
 
+          echo "::group::hosted-grid IB profile check (Layer C)"
+          for candidate in \
+              /ib-workspace/cache/ib_profile.xml \
+              /ib-workspace/incredibuild/ib_profile.xml; do
+              if [ -f "$candidate" ]; then
+                  echo "FOUND hosted-grid profile: $candidate"
+                  grep -n 'filename="rustc"\|ib_cache enabled="true"' "$candidate" || true
+              else
+                  echo "missing $candidate"
+              fi
+          done
+          echo "::endgroup::"
+
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "Probe complete. See expanded log groups for raw output." >> "$GITHUB_STEP_SUMMARY"
 
@@ -200,6 +213,19 @@ jobs:
           /usr/bin/ib_console --standalone --no-monitor -- /bin/true 2>&1 | head -20 || \
             /ib-workspace/incredibuild/bin/ib_console --standalone --no-monitor -- /bin/true 2>&1 | head -20
           echo "smoke exit: $?"
+          echo "::endgroup::"
+
+          echo "::group::hosted-grid IB profile inside container"
+          for candidate in \
+              /ib-workspace/cache/ib_profile.xml \
+              /ib-workspace/incredibuild/ib_profile.xml; do
+              if [ -f "$candidate" ]; then
+                  echo "FOUND hosted-grid profile: $candidate"
+                  grep -n 'filename="rustc"\|ib_cache enabled="true"' "$candidate" || true
+              else
+                  echo "missing $candidate"
+              fi
+          done
           echo "::endgroup::"
 
           echo "::group::cargo availability"

@@ -17,8 +17,8 @@ beneficiary and a known risk.
 
 | Action | Who | Effort | Effect on monty | Effect on every other IB customer |
 |---|---|---|---|---|
-| Ship `cargo` SHIM on the runner image (Layer A) | IB build-acceleration team | **Done** — vnext PR #210 merged and Tal deployed the image | `scripts/cargo-ib.sh` deleted from monty; temporary `IB_CONSOLE_ARGS` wiring keeps the repo profile until Layer C | Every Rust workload on the JIT runner gets free `ib_console` build cache, no per-customer wrapper needed |
-| Run `manylinux-probe` job in `ib-probe.yml` (Layer B) | us — pending IB pool capacity | ~5 min CI time | If green: 8 more monty jobs (the entire wheel-build matrix) become IB-cacheable — 4/32 → 12/32 (38%) | Every Python-wheel-building customer of IB unlocked simultaneously |
+| Ship `cargo` SHIM on the runner image (Layer A) | IB build-acceleration team | **Done** — vnext PR #210 merged and Tal deployed the image | Standard cargo subcommands are out-of-the-box; `scripts/cargo-ib.sh` remains only as a small bridge for extension/toolchain forms until vnext covers them | Every Rust workload on the JIT runner gets free `ib_console` build cache for normal cargo build/test/bench/check/clippy/run/install/rustc flows |
+| Run `manylinux-probe` job in `ib-probe.yml` (Layer B) | us | **Done** — probe and cell H are green; first production Linux PGO wheel job is now wired through a GHA-level manylinux container on `incredibuild-runner` | Validates the path toward 8 more IB-cacheable wheel jobs | Every Python-wheel-building customer of IB unlocked simultaneously |
 | Upload `scripts/ib-profile.xml` to your tenant's hosted-grid IB settings (Layer C) | Sam + IB ops | 5 min via the IB grid UI | `scripts/ib-profile.xml` and the `IB_PROFILE` env wiring delete from monty; profile becomes centrally-tunable without re-merging | Sets the precedent that profile config lives at the tenant level, not per-repo |
 | Bump `NAMESPACE_INSTANCE_DURATION_MINUTES` from ~12 to 30 on the Rust pool (Layer E) | IB ops | one Prefect/grid config edit | `lint` and `fuzz` jobs (currently forced to `ubuntu-latest` by the cap) move to IB; recovers a long-tail of CI time | Every Rust customer with > 12-min jobs |
 
@@ -72,15 +72,18 @@ hand-mimics what this PR auto-generates. G tracking F within noise is
 the green light to merge.
 
 **Cleanup now applied in monty**:
-- Deleted `scripts/cargo-ib.sh`.
-- Deleted `CARGO=./scripts/cargo-ib.sh` env wiring from `ci.yml`
-  (`test-python-coverage`, `build-js` Linux entries).
-- Deleted `CARGO_BIN: ./scripts/cargo-ib.sh` from
-  `ib-bench.yml::cell-F-ib-test-rust` and `cell-I-ib-codspeed`.
-- Kept `scripts/ib-prep.sh`; it now exports `IB_CONSOLE_ARGS` so the
-  runner-image cargo shim still receives monty's rustc profile and
-  per-job cache logfile until Layer C moves the profile to hosted-grid
-  settings.
+- Standard cargo calls now rely on the runner image's generated cargo
+  shim through `$PATH`.
+- `scripts/cargo-ib.sh` was reintroduced as a narrow bridge for cargo
+  extension/toolchain forms the upstream shim does not classify yet:
+  `cargo llvm-cov`, `cargo codspeed`, and `cargo +nightly miri`.
+- Deleted the broad `CARGO=./scripts/cargo-ib.sh` env wiring from
+  `test-python-coverage` and `build-js`; maturin and napi-rs now use the
+  image-side shim when they call normal cargo subcommands.
+- Kept `scripts/ib-prep.sh`; it exports `IB_CONSOLE_ARGS` so both the
+  runner-image cargo shim and the bridge wrapper receive monty's rustc
+  profile, per-job cache logfile, and runner-cap mitigation flags until
+  Layer C moves the profile to hosted-grid settings.
 
 ---
 
@@ -158,6 +161,14 @@ fetches via `get_hosted_grid_ib_settings` and ships to the runner as
 - The runner picks up the profile automatically — no monty changes
   needed beyond the deletes.
 
+**Local guardrail added here**: `scripts/ib-prep.sh` now prefers
+`/ib-workspace/cache/ib_profile.xml` or
+`/ib-workspace/incredibuild/ib_profile.xml` when the hosted-grid profile
+is present, and only falls back to `scripts/ib-profile.xml` until the
+tenant config is uploaded. `ib-probe.yml` also prints those hosted paths
+so the cleanup gate is visible in CI logs without opening a separate
+tracking issue.
+
 **Why this is correct architecture**: a profile is per-tenant tuning,
 not per-PR / per-commit data. Today every monty PR re-pushes the same
 XML; tenant-level config is the right home.
@@ -200,6 +211,11 @@ config setting, not a code change.
 > bump to 30 on a dedicated 'rust-heavy' label/pool so we can move
 > `lint` and `fuzz` back to IB without forcing ubuntu-latest."
 
+**Local state until that happens**: all current IB jobs keep explicit
+`IB_MAX_LOCAL_CORES` / `IB_PREVENT_OVERLOAD` settings, while `lint`,
+`fuzz`, and the broad Python matrix stay on `ubuntu-latest`. That keeps
+CI green without pretending the Namespace cap has changed.
+
 **Effect**: 17/32 of monty's compile-bound jobs on IB (53%). Most of
 the recovered jobs (lint, fuzz) are real cargo work; the
 `test-python` matrix is structurally uncacheable (pytest dynamic
@@ -211,7 +227,7 @@ imports) so those stay on ubuntu-latest by choice, not by cap.
 
 Status of each on `ci/incredibuild-runners`:
 
-- ❌ **`.github/workflows/codspeed.yml` reverted to `ubuntu-latest`.**
+- ❌ **`.github/workflows/codspeed.yml` intentionally stays on `ubuntu-latest`.**
   First attempt put codspeed on IB but CI run
   [25722680967](https://github.com/Incredibuild-RND/monty/actions/runs/25722680967)
   reproducibly failed with `setarch: failed to set personality to
@@ -220,25 +236,36 @@ Status of each on `ci/incredibuild-runners`:
   personality. The IB self-hosted runner image runs under restricted
   Linux capabilities (no `SYS_ADMIN`, user-namespace remap) so the
   personality syscall is blocked. github-hosted runners allow it.
-  Two paths to recover the IB value here: (a) hybrid — `cargo
-  codspeed build` on IB, transfer artifacts, `cargo codspeed run` on
-  ubuntu-latest; (b) ask IB ops to relax the runner image's
-  seccomp/capability profile to allow `setarch personality`. Until
-  either lands, codspeed stays on ubuntu-latest. The cache value of
-  the BUILD step is still measured in `ib-bench.yml::cell-I-ib-codspeed`
-  (which only does `cargo codspeed build`, no valgrind run).
+  Local decision: do **not** implement the hybrid build-on-IB/run-on-
+  ubuntu flow in production right now. It would require fragile
+  target-dir/artifact pinning across cargo-codspeed's instrumented
+  outputs. CodSpeed stays on `ubuntu-latest` until the runner image can
+  allow `setarch` / `personality(2)`. The cache value of the BUILD step
+  is still measured in `ib-bench.yml::cell-I-ib-codspeed` (which only
+  does `cargo codspeed build`, no valgrind run).
+  Current PR state has a separate CodSpeed failure on `ubuntu-latest`:
+  `Failed to retrieve upload data: 401 Unauthorized`. That is a
+  CodSpeed auth / repo-permissions issue, not an IB runner regression.
 - ✅ **`.github/workflows/ci.yml::build-js` matrix:** entries
   `x86_64-unknown-linux-gnu` and `wasm32-wasip1-threads` switched to
   `incredibuild-runner`. macOS / Windows / aarch64 entries kept on
   their current runners (IB has no pool for those today).
+- ✅ **`.github/workflows/ci.yml::build-pgo-linux-ib`:** first
+  production manylinux wheel path moved to `incredibuild-runner` with a
+  GHA-level `manylinux_2_28` container, matching the green cell-H
+  architecture. If this validates on the release/full-build path, expand
+  the remaining Linux wheel matrix entries.
 - ✅ **Conditional IB env injection.** `CARGO`,
   `IB_MAX_LOCAL_CORES`, `IB_PREVENT_OVERLOAD`, `ib-prep.sh`, and
   `ib-stats.sh` only fire when `matrix.settings.host ==
   'incredibuild-runner'`, so the matrix pattern stays clean.
 
-Layer A has merged and deployed. The `CARGO=$(pwd)/scripts/cargo-ib.sh`
-lines are gone; the runner image's auto-generated `cargo` shim takes
-over via `$PATH`.
+Layer A has merged and deployed. The broad
+`CARGO=$(pwd)/scripts/cargo-ib.sh` lines are gone; the runner image's
+auto-generated `cargo` shim takes over via `$PATH` for normal cargo
+subcommands. The remaining local bridge is deliberately scoped to cargo
+extensions and toolchain-prefixed commands that are not out-of-the-box
+yet.
 
 ### New roadmap item discovered: IB runner needs `setarch personality`
 
@@ -252,9 +279,10 @@ personality. This blocks at minimum:
 - callgrind-based call-graph profiling
 - Any tool that uses `personality(2)` for ASLR control
 
-Suggested ask for IB ops: enable the `personality` syscall in the
-runner image's seccomp profile (or grant `CAP_SYS_ADMIN` to the
-container). Both are common settings for build runners.
+Suggested local tracking item for IB ops: enable the `personality`
+syscall in the runner image's seccomp profile (or grant `CAP_SYS_ADMIN`
+to the container). Both are common settings for build runners. Keep this
+tracked here rather than opening a separate GitHub issue.
 
 ---
 
@@ -303,4 +331,4 @@ plan) rather than an IB-product item.
 | 0:00 – 0:05 | Context: monty IB integration status, 1.48× measured on `test-rust`, what's gating further coverage | me | shared frame |
 | 0:05 – 0:15 | Layer C — paste `scripts/ib-profile.xml` into the hosted-grid `IB_PROFILE_CONTENT` field for the monty tenant; verify a probe run picks it up via `entrypoint.sh:47-51` | IB ops | profile lives at tenant level; monty PR can delete the file |
 | 0:15 – 0:25 | Layer E — confirm current `NAMESPACE_INSTANCE_DURATION_MINUTES` for the pool serving Incredibuild-RND/monty; agree on a bump to 30 (or a dedicated `rust-heavy` label/pool) | IB ops | `lint`, `fuzz`, `test-python-coverage` can move back to IB |
-| 0:25 – 0:30 | Capture the `setarch personality` blocker (Layer F roadmap) — file a ticket if not already, decide whether to relax seccomp or document hybrid-build path | IB ops + me | ticket # captured; decision recorded |
+| 0:25 – 0:30 | Capture the `setarch personality` blocker (Layer F roadmap) locally, decide whether to relax seccomp or document hybrid-build path | IB ops + me | decision recorded here; no external GitHub issue |

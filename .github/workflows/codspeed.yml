@@ -24,17 +24,19 @@ jobs:
     # capabilities (no SYS_ADMIN, user-namespace remap), so the
     # personality syscall is blocked. github-hosted runners allow it.
     #
-    # We still WANT codspeed on IB because the underlying `cargo
-    # codspeed build` step is rustc-bound and would benefit from the
-    # build cache. Two paths to recover that value:
-    #   1. Hybrid: build on IB, transfer artifacts, run on ubuntu-latest.
-    #      Doable but requires careful artifact pinning.
-    #   2. Have IB ops relax the runner image's seccomp/capability
-    #      profile to allow setarch personality. Security trade-off.
-    # Until either is in place, codspeed.yml stays on ubuntu-latest.
-    # The monty-side measurement of the IB-build value lives in
+    # Decision: keep the production CodSpeed workflow on ubuntu-latest.
+    # A hybrid "build on IB, run on ubuntu" flow would need fragile
+    # target-dir/artifact pinning across cargo-codspeed's instrumented
+    # outputs. The clean fix is runner-image support for setarch /
+    # personality(2); until then, CodSpeed stays on the runner that can
+    # execute Valgrind. The monty-side measurement of the IB-build value
+    # remains local in this repo via:
     # ib-bench.yml::cell-I-ib-codspeed (which only does `cargo codspeed
     # build`, no valgrind run, so it works on IB).
+    #
+    # If this workflow fails on ubuntu-latest with "Failed to retrieve
+    # upload data: 401 Unauthorized", that is CodSpeed auth / repository
+    # permissions, not an IB runner issue.
     runs-on: ubuntu-latest
 
     steps:

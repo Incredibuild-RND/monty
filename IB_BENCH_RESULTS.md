@@ -12,6 +12,15 @@ If you are reviewing this for the first time, read **TL;DR for Sam**, the
 
 ## TL;DR for Sam
 
+**Current closure correction (2026-05-12)**: vnext PR #210 has shipped,
+so normal cargo subcommands (`build`, `test`, `bench`, `check`,
+`clippy`, `run`, `install`, `rustc`) are now wrapped out-of-the-box by
+the IB runner image. Monty still keeps `scripts/cargo-ib.sh` as a narrow
+bridge for cargo extension/toolchain forms (`llvm-cov`, `codspeed`,
+`+nightly miri`) until vnext classifies those forms directly. The
+benchmark numbers below remain valid; this note only updates the
+implementation boundary.
+
 **The integration is done, measured across six bench cells, all on
 the same date and the same runner pool. Final canonical numbers
 (run [25706688862](https://github.com/Incredibuild-RND/monty/actions/runs/25706688862),
@@ -111,17 +120,20 @@ F iter ≥ 2) are cache-bound and would not change.
    cache speedup instead, which is fine for CI but worth noting for
    "this replaces cargo incremental" mental model.
 
-4. **The wrapper flag set is minimal and verified.** Every flag in
-   `scripts/cargo-ib.sh` was cross-referenced against the option table
-   in `ib_linux:cpp/XgConsole/XgConsole_main.cpp` (lines 84-152,
-   270-650). Nothing speculative.
+4. **The `ib_console` flag set is minimal and verified.** The same
+   flag set is now used by the runner-image cargo shim for standard
+   cargo subcommands and by `scripts/cargo-ib.sh` for the remaining
+   extension/toolchain bridge. Every flag was cross-referenced against
+   the option table in `ib_linux:cpp/XgConsole/XgConsole_main.cpp`
+   (lines 84-152, 270-650). Nothing speculative.
 
 5. **Python jobs are deliberately NOT wrapped in `ib_console`** —
    `pytest`, `uv run`, the top-level `maturin develop` driver, and
    `prek`/`ruff`/`mypy` get zero cache value and would only pay
    ib_console's startup cost. The cargo subprocess that `maturin`
-   shells out to *is* wrapped (via `CARGO=$WORKSPACE/scripts/cargo-ib.sh`
-   at the job env) so the rustc cache pays off for the heavy compile.
+   shells out to *is* wrapped by the runner-image cargo shim when it
+   reaches a normal compile-driving cargo subcommand, so the rustc cache
+   pays off for the heavy compile.
    Full reasoning grounded in `ib_linux:cpp/BuildCache/BuildCache_Rules.cpp`
    in the "Python and `ib_console`" section below.
 
@@ -149,9 +161,10 @@ F iter ≥ 2) are cache-bound and would not change.
   invocations and non-deterministic build scripts don't pollute or
   wrongly hit the cache). Inherits `gcc`/`clang`/`cc1`/`cc1plus`
   rules from the default profile by NOT redeclaring them.
-- `scripts/cargo-ib.sh` — minimal `ib_console` wrapper, every flag
-  cross-referenced against `XgConsole_main.cpp`. Removed an earlier
-  experimental branch and `IB_TARGET` symlink dance.
+- `scripts/cargo-ib.sh` — originally the minimal `ib_console` wrapper
+  for all cargo work; after vnext PR #210 it is intentionally narrowed
+  to extension/toolchain forms the runner image does not yet classify.
+  Every flag is cross-referenced against `XgConsole_main.cpp`.
 - `scripts/ib-prep.sh` — exports `IB_CACHE_LOG` (absolute path under
   `/etc/incredibuild/log/`, required by the `ib_console` option
   parser) and `IB_PROFILE`. Installs `/usr/bin/time` if missing.
@@ -349,11 +362,13 @@ Three observations the bench alone could not give us:
 
 ### `test-python-coverage` — maturin's cargo subprocess is wrapped (verified)
 
-Pulled from job 75467113366 logs. `CARGO=$WORKSPACE/scripts/cargo-ib.sh`
-is exported at the job env; we see ~20 `CARGO: …/scripts/cargo-ib.sh`
-lines in the maturin step, confirming maturin's cargo subprocess goes
-through the wrapper. The maturin compile (`uv run maturin develop`)
-took **56.87 s** on a runner whose cache was already at 987 MiB.
+Pulled from job 75467113366 logs. At the time of this measurement,
+`CARGO=$WORKSPACE/scripts/cargo-ib.sh` routed maturin's cargo subprocess
+through the repo wrapper. In the current closure state, the broad
+`CARGO=` env override is removed and maturin reaches the runner-image
+cargo shim for normal compile-driving cargo subcommands. The maturin
+compile (`uv run maturin develop`) took **56.87 s** on a runner whose
+cache was already at 987 MiB.
 That is well-amortised for a one-shot compile of a pyo3 extension;
 without the cache it would be in the 80–120 s range based on the
 bench's cell A baseline.
@@ -508,8 +523,8 @@ verification in hand:
 > deliberately NOT wrapped — pytest/uv/maturin orchestration
 > would gain zero cache value and only add ib_console daemon
 > startup overhead. The cargo subprocess that maturin shells out
-> to IS wrapped (`CARGO=$WORKSPACE/scripts/cargo-ib.sh`) so
-> rustc caching pays off for the heavy compile.
+> to IS wrapped by the runner-image cargo shim for normal compile
+> subcommands, so rustc caching pays off for the heavy compile.
 >
 > Full source-grounded reasoning, decision tables, the four-cell
 > measurement matrix, and the post-hoc real-CI timeline are in
@@ -623,12 +638,12 @@ argv and `.rsp` files); it is the wrong shape for an interpreter.
 |---|---|---|
 | `uv sync --all-packages --only-dev` | **No** | PyPI download + dependency resolution + wheel install. uv's own cache is the right cache here. ib_console can't fingerprint network I/O. |
 | `uv run maturin develop --uv -m crates/monty-python/Cargo.toml` (top-level) | **No** | `maturin` is a Python binary that orchestrates a cargo subprocess and copies the resulting `.so` into the venv. The orchestration itself is fast and side-effecty. |
-| ↳ cargo subprocess that maturin shells out to | **Yes — already wired** | Heavy `rustc` work. `ci.yml::test-python-coverage` sets `CARGO=$WORKSPACE/scripts/cargo-ib.sh` at the job level; cargo respects this env var and uses our wrapper instead of `cargo` for the nested call, so the rustc cache pays off. |
+| ↳ cargo subprocess that maturin shells out to | **Yes — already wired** | Heavy `rustc` work. Current closure state relies on the runner-image cargo shim for normal compile-driving cargo subcommands; the local bridge is only for extension/toolchain forms. |
 | `uv run --package pydantic-monty --only-dev pytest crates/monty-python/tests` | **No** | Test execution. Loads dynamically-imported `.py` files, conftest fixtures, plugins, runtime fs and socket activity. Not a deterministic input→output build artifact. Even if it were, ib_console can't see the import graph as part of the key. |
 | `make pytest` (in `test-python` matrix) | **No** | Same as above. The matrix runs on `ubuntu-latest` anyway. |
-| `make dev-py` / `make dev-py-release` | **No** at top level (calls maturin), **Yes** transitively for the inner cargo via `CARGO=` (only on IB jobs that set it). | Same logic: route the cargo subprocess, not the maturin driver. |
+| `make dev-py` / `make dev-py-release` | **No** at top level (calls maturin), **Yes** transitively for the inner cargo on IB jobs. | Same logic: route the cargo subprocess, not the maturin driver. |
 | `prek` / `ruff` / `ruff format` / `basedpyright` / `mypy` / `codespell` / `yamlfmt` / `zizmor` | **No** | Lint hooks. Ruff is a sub-second Rust binary; mypy/basedpyright have their own (much better) incremental caches; the ib_console daemon-startup cost would dwarf the work. The `lint` job stays on `ubuntu-latest` for this reason (and to dodge the IB runner's wall-clock cap, which kills basedpyright + workspace clippy mid-run). |
-| `cargo-llvm-cov` (subcommands `clean`, `--no-report`, `report`, `report --codecov`) | **Yes** | All cargo subcommands; route through `cargo-ib.sh`. The `show-env` subcommand is the one exception — it just prints env discovery output that we `eval`, and ib_console's "ib_server connected" stdout chatter would corrupt the eval. Use plain `cargo` for `show-env` only. |
+| `cargo-llvm-cov` (subcommands `clean`, `--no-report`, `report`, `report --codecov`) | **Yes** | Route compile-driving extension calls through the bridge until vnext handles cargo extensions directly. The `show-env` subcommand is the one exception — it just prints env discovery output that we `eval`, and ib_console's "ib_server connected" stdout chatter would corrupt the eval. Use plain `cargo` for `show-env` only. |
 | `cargo bench`, `cargo +nightly miri test`, `cargo fuzz run`, `cargo install` | **Yes** | All real cargo invocations. Compilation in each case is rustc work; rustc cache pays off on rebuild. Test/bench/miri/fuzz **execution** is not cached (and shouldn't be — fuzzing is nondeterministic by design, miri-run is intentionally slow interpretation). |
 | Wheel/sdist build via `PyO3/maturin-action` | **No** | These jobs run on `ubuntu-latest` (not on the IB runner) and use cross-compilation containers. Not in scope for the IB integration. |
 
@@ -644,9 +659,10 @@ Each `ib_console` invocation pays a fixed cost:
   the test process because it isn't declared in any profile and its
   inputs aren't argv-visible.
 
-The current configuration (`CARGO=` env on test-python-coverage,
-plain `pytest` and plain `uv run`) is the point on the curve where
-all the cache value lives and none of the overhead does. There is
+The current configuration (runner-image cargo shim for maturin's normal
+cargo compile path, bridge only for extension/toolchain cargo forms,
+plain `pytest` and plain `uv run`) is the point on the curve where all
+the cache value lives and none of the overhead does. There is
 nothing further to wire.
 
 ### Could a future product change unlock more?
@@ -980,7 +996,7 @@ extended speedup table automatically.
 | Pre-PR (no IB integration) | 0 of 32 (0%) |
 | Today (this PR's `ci.yml::test-rust` + `test-python-coverage` + `bench-test` + `miri`) | 4 of 32 (12.5%) |
 | + Layer F (3 wirings, codspeed reverted to ubuntu) | 6 of 32 (19%) |
-| + Layer A landed in vnext (cargo SHIM auto-applies) | 6 of 32; `scripts/cargo-ib.sh` retired from monty |
+| + Layer A landed in vnext (cargo SHIM auto-applies) | 6 of 32; standard cargo is out-of-the-box, with `scripts/cargo-ib.sh` retained only as an extension/toolchain bridge |
 | + Layer B GREEN — manylinux Docker reachable (Phase 8 wires 1, then 8) | 14 of 32 (44%) |
 | + Layer E (cap bumped, lint/fuzz/test-python-coverage back on IB) | 17 of 32 (53%) |
 | + Layer G (macOS/Windows/aarch64 IB pools) | 27 of 32 (84%) |

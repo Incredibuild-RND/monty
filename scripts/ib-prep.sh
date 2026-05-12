@@ -78,7 +78,11 @@ if [ -x /usr/bin/ib_console ]; then
 else
     echo "ib_console not present — wrapper will fall through to plain cargo"
 fi
-ls -la scripts/ib-profile.xml 2>/dev/null || true
+for profile_candidate in /ib-workspace/cache/ib_profile.xml \
+                         /ib-workspace/incredibuild/ib_profile.xml \
+                         scripts/ib-profile.xml; do
+    ls -la "$profile_candidate" 2>/dev/null || true
+done
 
 # 2b. export IB_CACHE_LOG / IB_PROFILE / IB_CONSOLE_ARGS ------------------
 # Logfile path must be ABSOLUTE (XgConsole_main.cpp:482). We put it under
@@ -88,14 +92,21 @@ ls -la scripts/ib-profile.xml 2>/dev/null || true
 # so concurrent jobs on the same runner don't stomp each other's log.
 #
 # The vnext-processing-engine cargo shim reads IB_CONSOLE_ARGS and uses it
-# instead of its built-in default args. Until Phase 6 moves ib-profile.xml
-# into hosted-grid settings, this is how monty keeps the rustc cache profile,
-# per-job cache logfile, and runner-cap mitigation flags while deleting the
-# repo-local cargo wrapper.
+# instead of its built-in default args. Prefer the hosted-grid profile that
+# vnext decodes into /ib-workspace; fall back to the repo profile only until
+# IB ops has uploaded the tenant-level profile.
 if [ -n "${GITHUB_ENV:-}" ]; then
     job_id="${GITHUB_JOB:-local}_${GITHUB_RUN_ID:-0}_${GITHUB_RUN_ATTEMPT:-1}"
     log_path="/etc/incredibuild/log/ib_cache_${job_id}.log"
-    profile_path="$PWD/scripts/ib-profile.xml"
+    profile_path=""
+    for candidate in /ib-workspace/cache/ib_profile.xml \
+                     /ib-workspace/incredibuild/ib_profile.xml \
+                     "$PWD/scripts/ib-profile.xml"; do
+        if [ -f "$candidate" ]; then
+            profile_path="$candidate"
+            break
+        fi
+    done
     ib_console_args="--standalone --build-cache-local-shared --build-cache-force --build-cache-basedir=$PWD --build-cache-local-logfile=$log_path --build-cache-report-all-miss --no-monitor"
     if [ -n "${IB_MAX_LOCAL_CORES:-}" ]; then
         ib_console_args="$ib_console_args --max-local-cores=$IB_MAX_LOCAL_CORES"
@@ -103,16 +114,22 @@ if [ -n "${GITHUB_ENV:-}" ]; then
     if [ -n "${IB_PREVENT_OVERLOAD:-}" ]; then
         ib_console_args="$ib_console_args --prevent-initiator-overload"
     fi
-    if [ -z "${IB_NO_CACHE:-}" ]; then
+    if [ -z "${IB_NO_CACHE:-}" ] && [ -n "$profile_path" ]; then
         ib_console_args="$ib_console_args --profile=$profile_path"
+    elif [ -z "${IB_NO_CACHE:-}" ]; then
+        echo "::warning::No IB rustc cache profile found; rustc cache will use runner defaults"
     fi
     {
         echo "IB_CACHE_LOG=$log_path"
-        echo "IB_PROFILE=$profile_path"
+        if [ -n "$profile_path" ]; then
+            echo "IB_PROFILE=$profile_path"
+        fi
         echo "IB_CONSOLE_ARGS=$ib_console_args"
     } >> "$GITHUB_ENV"
     echo "IB_CACHE_LOG=$log_path"
-    echo "IB_PROFILE=$profile_path"
+    if [ -n "$profile_path" ]; then
+        echo "IB_PROFILE=$profile_path"
+    fi
     echo "IB_CONSOLE_ARGS=$ib_console_args"
     # mkdir at root may need sudo if not already root; tolerate failure
     # (the runner cargo shim / ib_console will report if logging fails).

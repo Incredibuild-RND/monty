@@ -12,6 +12,17 @@ or when a JIT runner image rebuild lands, the right person can open
 the cleanup PR in 10 minutes by following the diff below — they don't
 need to re-derive the change set.
 
+**Current correction (2026-05-12)**: Phase 5 below is partly
+superseded. vnext PR #210 has shipped and the runner image now handles
+standard cargo subcommands out-of-the-box, but it does **not** yet
+classify cargo extension/toolchain forms such as `cargo llvm-cov`,
+`cargo codspeed`, or `cargo +nightly miri`. Do not delete
+`scripts/cargo-ib.sh` until vnext adds first-class coverage for those
+forms and monty's `test-rust`, `miri`, and codspeed-build bench cells
+are green without the bridge. The broad `CARGO=...cargo-ib.sh` env
+wiring can stay removed; the bridge should remain only at explicit
+extension/toolchain call sites.
+
 ---
 
 ## Phase 5 — Delete `scripts/cargo-ib.sh` and all `CARGO=…cargo-ib.sh` wirings
