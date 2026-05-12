@@ -8,7 +8,8 @@ with header:
   iteration,wall_seconds,user_seconds,sys_seconds,max_rss_kb,hits,misses,cache_size_bytes_delta,target_size_bytes,coverage_sha256
 
 This script reads them, computes mean/stddev for wall_seconds, and writes
-a comparison table plus speedup ratios (D/A, C/A, B/A) to $GITHUB_STEP_SUMMARY
+a comparison table plus speedup ratios (B/A, C/A, D/A on the synthetic
+workload, and F/E on the real test-rust workload) to $GITHUB_STEP_SUMMARY
 (if set) and stdout.
 
 Usage:
@@ -24,11 +25,13 @@ import statistics
 import sys
 from pathlib import Path
 
-CELLS = [
+CELLS: list[tuple[str, str]] = [
     ('A', 'ubuntu-latest, no IB'),
     ('B', 'IB, default profile (rustc NOT cached)'),
     ('C', 'IB, custom profile (rustc cached) — COLD'),
     ('D', 'IB, custom profile (rustc cached) — WARM'),
+    ('E', 'ubuntu-latest, real test-rust workload (8 cargo invocations)'),
+    ('F', 'IB runner, real test-rust workload, warm cache'),
 ]
 
 
@@ -97,7 +100,11 @@ def main(results_dir: str) -> int:
     lines: list[str] = []
     lines.append('# IB build-runner value matrix')
     lines.append('')
-    lines.append('Same workload (`cargo test --no-run -p monty`), N iterations per cell.')
+    lines.append('Cells A/B/C/D run the synthetic `cargo test --no-run -p monty` workload')
+    lines.append('(fast cell-comparison signal). Cells E/F run the real test-rust')
+    lines.append('workload (8 `cargo llvm-cov` calls per iteration, mirroring')
+    lines.append('`.github/workflows/ci.yml::test-rust`) for a directly measured')
+    lines.append('ubuntu-latest → IB speedup.')
     lines.append('')
     lines.append('| cell | configuration | wall time | hits | misses | target/ size |')
     lines.append('|---|---|---|---|---|---|')
@@ -118,8 +125,12 @@ def main(results_dir: str) -> int:
     a_warm = a_wall[1:] if len(a_wall) > 1 else a_wall
     b_warm = fnum(cells.get('B', []), 'wall_seconds')[1:]
     d_warm = fnum(cells.get('D', []), 'wall_seconds')[1:]
+    e_wall = fnum(cells.get('E', []), 'wall_seconds')
+    f_wall = fnum(cells.get('F', []), 'wall_seconds')
+    e_warm = e_wall[1:] if len(e_wall) > 1 else e_wall
+    f_warm = f_wall[1:] if len(f_wall) > 1 else f_wall
 
-    lines.append('## Speedup vs ubuntu-latest baseline (A)')
+    lines.append('## Speedup vs ubuntu-latest baseline (A) — synthetic workload')
     lines.append('')
     lines.append('Each cell aggregates ALL iterations (cold + warm). Iter 1 of B/C/D')
     lines.append('includes one-time costs (cargo registry warmup on B, cache fill on')
@@ -130,7 +141,7 @@ def main(results_dir: str) -> int:
     lines.append('')
     lines.append('| comparison | meaning | speedup (all iters) |')
     lines.append('|---|---|---|')
-    for label, _ in CELLS[1:]:
+    for label, _ in CELLS[1:4]:
         rows = cells.get(label, [])
         w = fnum(rows, 'wall_seconds')
         meaning = {
@@ -140,7 +151,7 @@ def main(results_dir: str) -> int:
         }[label]
         lines.append(f'| **A → {label}** | {meaning} | {fmt_ratio(w, a_wall)} |')
     lines.append('')
-    lines.append('| steady-state comparison | iters used | A wall | other wall | speedup |')
+    lines.append('| steady-state comparison | iters used | baseline wall | comparison wall | speedup |')
     lines.append('|---|---|---|---|---|')
     if a_warm and b_warm:
         lines.append(
@@ -152,6 +163,34 @@ def main(results_dir: str) -> int:
             f'| **A → D steady (rustc cache hit, warm)** | A iter≥2, D iter≥2 | '
             f'{fmt_mean_std(a_warm)} | {fmt_mean_std(d_warm)} | {fmt_ratio(d_warm, a_warm)} |'
         )
+    lines.append('')
+
+    lines.append('## Realistic test-rust speedup (E → F)')
+    lines.append('')
+    lines.append('The apples-to-apples measurement: same 8-call cargo llvm-cov')
+    lines.append('sequence as `ci.yml::test-rust`, run on ubuntu-latest (E) vs')
+    lines.append('the IB runner with rustc cache warmed (F). iter ≥ 2 mean is')
+    lines.append('the directly measured warm-cache speedup that previously had')
+    lines.append('to be inferred from real-CI logs.')
+    lines.append('')
+    lines.append('| cell | iter 1 (cold) | iter 2 (warm) | iter≥2 mean |')
+    lines.append('|---|---|---|---|')
+    for label in ('E', 'F'):
+        w = fnum(cells.get(label, []), 'wall_seconds')
+        i1 = f'{w[0]:.1f}s' if w else '—'
+        i2 = f'{w[1]:.1f}s' if len(w) > 1 else '—'
+        warm = w[1:] if len(w) > 1 else []
+        lines.append(f'| **{label}** | {i1} | {i2} | {fmt_mean_std(warm)} |')
+    lines.append('')
+    lines.append('| steady-state comparison | iters used | ubuntu (E) wall | IB (F) wall | speedup |')
+    lines.append('|---|---|---|---|---|')
+    if e_warm and f_warm:
+        lines.append(
+            f'| **E → F steady (real test-rust, warm cache)** | E iter≥2, F iter≥2 | '
+            f'{fmt_mean_std(e_warm)} | {fmt_mean_std(f_warm)} | {fmt_ratio(f_warm, e_warm)} |'
+        )
+    elif e_wall and not f_wall:
+        lines.append(f'| **E only (cell F blocked)** | E iter≥2 | {fmt_mean_std(e_warm or e_wall)} | — | — |')
     lines.append('')
 
     # Correctness gate.

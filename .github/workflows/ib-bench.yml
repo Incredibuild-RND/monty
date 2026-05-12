@@ -1,9 +1,13 @@
 name: ib-bench
 
-# 4-cell A/B/C/D measurement matrix for the IncrediBuild integration.
-# The same cargo workload runs under each configuration, three iterations
-# each, capturing wall-clock + IB cache hit/miss + cache-dir size + the
-# byte hash of the produced rust-coverage.json artifact.
+# 6-cell A/B/C/D + E/F measurement matrix for the IncrediBuild integration.
+# A/B/C/D run the synthetic `cargo test --no-run -p monty` workload three
+# iterations each for fast cell-comparison signal. E/F run the real
+# .github/workflows/ci.yml::test-rust workload (8 cargo llvm-cov calls)
+# two iterations each for a directly measured ubuntu-latest → IB speedup.
+#
+# All cells capture wall-clock + IB cache hit/miss + cache-dir size + final
+# target/ size per iteration.
 #
 # Cells (per the plan in monty/.cursor/plans/monty IB best-value-*.plan.md):
 #   A  ubuntu-latest, plain cargo (Swatinem rust-cache enabled)
@@ -14,9 +18,16 @@ name: ib-bench
 #      (cleared at job start). Models "first run on a clean runner."
 #   D  incredibuild-runner, custom profile (rustc cached), WARM cache
 #      (populated by C above). Models "every push after the first."
+#   E  ubuntu-latest, plain cargo, real test-rust workload. The
+#      "what would test-rust cost on ubuntu-latest" baseline that
+#      previously had to be inferred from CI logs.
+#   F  incredibuild-runner, cargo-ib.sh (rustc cached), real test-rust
+#      workload, warm cache. Chained after D so D's cache state is
+#      stable and F's iter≥2 measures realistic warm-cache steady state.
 #
 # C must run before D on the same runner so D inherits a populated
-# /etc/incredibuild/cache/build_cache/shared/ from C.
+# /etc/incredibuild/cache/build_cache/shared/ from C. F is chained after
+# D to keep IB cache state predictable across the run.
 
 on:
   workflow_dispatch:
@@ -270,8 +281,123 @@ jobs:
         if: always()
         run: ./scripts/ib-stats.sh
 
+  cell-E-ubuntu-test-rust:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      CARGO_HOME: ${{ github.workspace }}/.cargo
+      CARGO_TARGET_DIR: ${{ github.workspace }}/target
+      LANG: C.UTF-8
+      LC_ALL: C.UTF-8
+      PYTHONUTF8: '1'
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@efa25f7f19611383d5b0ccf2d1c8914531636bf9
+        with:
+          toolchain: stable
+          components: llvm-tools
+
+      - uses: taiki-e/install-action@1ed3272338f573e042a2e6bca3893aa19f43b47a # v2.71.3
+        with:
+          tool: cargo-llvm-cov
+
+      - name: set up python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: '3.14'
+
+      - run: rm -f .cargo/config.toml
+
+      - name: bench cell E (real test-rust workload, ubuntu-latest)
+        env:
+          CELL: E
+          # The test-rust workload does 8 cargo calls + a full target/ wipe
+          # per iteration. ITERATIONS=2 is the smallest count that gives a
+          # cold (iter 1) + steady-state (iter 2) data point while staying
+          # well inside ubuntu-latest's 30-min timeout.
+          ITERATIONS: '2'
+          WORKLOAD: test-rust
+          CARGO_BIN: cargo
+        run: ./scripts/ib-bench-run.sh
+
+      - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: bench-cell-E
+          path: bench-results/E.csv
+          if-no-files-found: error
+
+  cell-F-ib-test-rust:
+    needs: cell-D-ib-warm
+    runs-on: incredibuild-runner
+    timeout-minutes: 30
+    env:
+      CARGO_HOME: ${{ github.workspace }}/.cargo
+      CARGO_TARGET_DIR: ${{ github.workspace }}/target
+      # Heavier than the synthetic A/B/C/D workload (8 llvm-cov calls per
+      # iteration) so we throttle local rustc concurrency in line with
+      # ci.yml::test-rust's mitigation for the runner wall-clock cap.
+      # IB cache hits are I/O-bound so capping cores costs little.
+      IB_MAX_LOCAL_CORES: '8'
+      LANG: C.UTF-8
+      LC_ALL: C.UTF-8
+      PYTHONUTF8: '1'
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@efa25f7f19611383d5b0ccf2d1c8914531636bf9
+        with:
+          toolchain: stable
+          components: llvm-tools
+
+      - uses: taiki-e/install-action@1ed3272338f573e042a2e6bca3893aa19f43b47a # v2.71.3
+        with:
+          tool: cargo-llvm-cov
+
+      - name: set up python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: '3.14'
+
+      - name: IB pre-flight
+        run: ./scripts/ib-prep.sh
+
+      - run: rm -f .cargo/config.toml
+
+      - name: bench cell F (real test-rust workload, IB warm)
+        env:
+          CELL: F
+          ITERATIONS: '2'
+          WORKLOAD: test-rust
+          CARGO_BIN: ./scripts/cargo-ib.sh
+          # IB pre-flight already exports IB_PROFILE via $GITHUB_ENV; we
+          # set it explicitly here to make the cell self-describing and
+          # robust against future ib-prep.sh changes.
+          IB_PROFILE: ${{ github.workspace }}/scripts/ib-profile.xml
+        run: ./scripts/ib-bench-run.sh
+
+      - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: bench-cell-F
+          path: bench-results/F.csv
+          if-no-files-found: error
+
+      - name: IB cache stats
+        if: always()
+        run: ./scripts/ib-stats.sh
+
   summarize:
-    needs: [cell-A-ubuntu-no-ib, cell-B-ib-no-cache, cell-C-ib-cold, cell-D-ib-warm]
+    needs:
+      - cell-A-ubuntu-no-ib
+      - cell-B-ib-no-cache
+      - cell-C-ib-cold
+      - cell-D-ib-warm
+      - cell-E-ubuntu-test-rust
+      - cell-F-ib-test-rust
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -291,7 +417,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p bench-results
-          for cell in A B C D; do
+          for cell in A B C D E F; do
             src="bench-artifacts/bench-cell-$cell/$cell.csv"
             if [ -f "$src" ]; then
               cp "$src" "bench-results/$cell.csv"
