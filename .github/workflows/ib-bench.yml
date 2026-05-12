@@ -159,6 +159,8 @@ jobs:
     env:
       CARGO_HOME: ${{ github.workspace }}/.cargo
       CARGO_TARGET_DIR: ${{ github.workspace }}/target
+      IB_MAX_LOCAL_CORES: '4'
+      IB_PREVENT_OVERLOAD: '1'
       LANG: C.UTF-8
       LC_ALL: C.UTF-8
       PYTHONUTF8: '1'
@@ -217,6 +219,8 @@ jobs:
     env:
       CARGO_HOME: ${{ github.workspace }}/.cargo
       CARGO_TARGET_DIR: ${{ github.workspace }}/target
+      IB_MAX_LOCAL_CORES: '4'
+      IB_PREVENT_OVERLOAD: '1'
       LANG: C.UTF-8
       LC_ALL: C.UTF-8
       PYTHONUTF8: '1'
@@ -275,6 +279,8 @@ jobs:
     env:
       CARGO_HOME: ${{ github.workspace }}/.cargo
       CARGO_TARGET_DIR: ${{ github.workspace }}/target
+      IB_MAX_LOCAL_CORES: '4'
+      IB_PREVENT_OVERLOAD: '1'
       LANG: C.UTF-8
       LC_ALL: C.UTF-8
       PYTHONUTF8: '1'
