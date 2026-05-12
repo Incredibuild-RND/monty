@@ -96,6 +96,37 @@ jobs:
           echo "force-remote exit: $?"
           echo "::endgroup::"
 
+          echo "::group::Layer-A cargo SHIM deploy check (Phase 4)"
+          # Once vnext-processing-engine PR #210 (cargo SHIM) merges and
+          # the runner image is rebuilt, an auto-generated cargo shim
+          # will appear at /ib-workspace/incredibuild/ib-accel/bin/cargo
+          # (or /opt/ib-accel/bin/cargo on older image variants). When
+          # this shows up, monty's scripts/cargo-ib.sh becomes redundant
+          # — the cleanup PR for Phase 5 of the closure plan can land.
+          # The next ib-probe run after the rebuild will surface this
+          # automatically without anyone having to remember to check.
+          for candidate in \
+              /ib-workspace/incredibuild/ib-accel/bin/cargo \
+              /opt/ib-accel/bin/cargo; do
+              if [ -e "$candidate" ]; then
+                  echo "FOUND Layer-A cargo shim: $candidate"
+                  ls -la "$candidate"
+                  echo "----- shim content (head) -----"
+                  head -30 "$candidate" 2>/dev/null
+                  echo "----- /shim content -----"
+                  echo "Layer-A is DEPLOYED on this runner image. Phase 5 (cleanup of scripts/cargo-ib.sh) is unblocked." >> "$GITHUB_STEP_SUMMARY"
+                  break
+              fi
+          done
+          if ! ls /ib-workspace/incredibuild/ib-accel/bin/cargo /opt/ib-accel/bin/cargo 2>/dev/null | grep -q .; then
+              echo "Layer-A cargo shim NOT yet present on this runner image."
+              echo "Status: vnext PR #210 either not merged, or the runner image not yet rebuilt."
+              echo "What IS present in /ib-workspace/incredibuild/ib-accel/bin:"
+              ls -la /ib-workspace/incredibuild/ib-accel/bin/ 2>&1 | head -20
+              echo "Layer-A NOT yet deployed. Phase 5 cleanup remains blocked." >> "$GITHUB_STEP_SUMMARY"
+          fi
+          echo "::endgroup::"
+
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "Probe complete. See expanded log groups for raw output." >> "$GITHUB_STEP_SUMMARY"
 

@@ -121,8 +121,9 @@ cache_size() {
 }
 
 target_size() {
-    if [ -d target ]; then
-        du -sb target 2>/dev/null | awk '{print $1+0}'
+    local d="${CARGO_TARGET_DIR:-target}"
+    if [ -d "$d" ]; then
+        du -sb "$d" 2>/dev/null | awk '{print $1+0}'
     else
         echo 0
     fi
@@ -211,10 +212,15 @@ PY
 for i in $(seq 1 "$ITERATIONS"); do
     echo "::group::cell ${CELL} iteration ${i}/${ITERATIONS}"
 
-    # Clean target/ between iterations so the rustc work is real
-    # every time. Use direct rm rather than `cargo clean` to avoid
-    # any cargo-subcommand dispatch quirks under ib_console.
-    rm -rf target 2>&1 | tail -5 || true
+    # Clean the cargo build dir between iterations so the rustc work
+    # is real every time. Use direct rm rather than `cargo clean` to
+    # avoid any cargo-subcommand dispatch quirks under ib_console.
+    # Honor $CARGO_TARGET_DIR so cells that route to a non-default
+    # target dir (e.g. cell H, which uses target-h/ to stay isolated
+    # from host-side cells' target/) actually clean their own dir.
+    _target_dir="${CARGO_TARGET_DIR:-target}"
+    rm -rf "$_target_dir" 2>&1 | tail -5 || true
+    unset _target_dir
 
     pre_cache=$(cache_size)
     pre_hits=$(count_logfile HIT)
