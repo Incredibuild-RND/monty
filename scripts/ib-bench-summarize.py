@@ -34,6 +34,7 @@ CELLS: list[tuple[str, str]] = [
     ('E', 'ubuntu-latest, real test-rust workload (8 cargo invocations)'),
     ('F', 'IB runner, real test-rust workload, warm cache'),
     ('G', 'IB runner, real test-rust via Layer-A SHIM simulation (no cargo-ib.sh)'),
+    ('H', 'IB runner, manylinux_2_28 GHA container, synthetic workload, IB warm'),
     ('I', 'IB runner, codspeed build workload, warm cache'),
 ]
 
@@ -131,10 +132,12 @@ def main(results_dir: str) -> int:
     e_wall = fnum(cells.get('E', []), 'wall_seconds')
     f_wall = fnum(cells.get('F', []), 'wall_seconds')
     g_wall = fnum(cells.get('G', []), 'wall_seconds')
+    h_wall = fnum(cells.get('H', []), 'wall_seconds')
     i_wall = fnum(cells.get('I', []), 'wall_seconds')
     e_warm = e_wall[1:] if len(e_wall) > 1 else e_wall
     f_warm = f_wall[1:] if len(f_wall) > 1 else f_wall
     g_warm = g_wall[1:] if len(g_wall) > 1 else g_wall
+    h_warm = h_wall[1:] if len(h_wall) > 1 else h_wall
     i_warm = i_wall[1:] if len(i_wall) > 1 else i_wall
 
     lines.append('## Speedup vs ubuntu-latest baseline (A) — synthetic workload')
@@ -221,6 +224,33 @@ def main(results_dir: str) -> int:
         )
     elif g_wall:
         lines.append(f'| **G only (cell F blocked)** | G iter≥2 | — | {fmt_mean_std(g_warm or g_wall)} | — |')
+    lines.append('')
+
+    # Layer B validation: H (synthetic in manylinux container on IB) vs D
+    # (synthetic on bare IB host). H_warm / D_warm ≈ 1.0 means the
+    # container hook's bind mount makes the IB cache fully reachable
+    # from inside the container — i.e. the 8 manylinux build matrix
+    # entries can be migrated to incredibuild-runner with no per-job
+    # custom plumbing beyond `runs-on:` + `container:`.
+    lines.append('## Layer-B manylinux container validation (D → H)')
+    lines.append('')
+    lines.append("Cell H runs the same synthetic workload as D but inside a GHA-level")
+    lines.append('`container: image: quay.io/pypa/manylinux_2_28_x86_64@sha256:...`')
+    lines.append('block, which fires `vnext-processing-engine`\u2019s container-hooks/index.js')
+    lines.append('and bind-mounts /ib-workspace + /opt/incredibuild into the container.')
+    lines.append('H tracking D within ~10% is the green light to migrate the wheel-build')
+    lines.append('matrix (`build` job, 8 Linux entries) onto `incredibuild-runner` without')
+    lines.append("any per-job IB plumbing beyond switching `runs-on:` + adding `container:`.")
+    lines.append('')
+    lines.append('| comparison | iters used | D wall | H wall | ratio (H/D) |')
+    lines.append('|---|---|---|---|---|')
+    if d_warm and h_warm:
+        lines.append(
+            f'| **D \u2192 H steady (synthetic, IB warm, container vs host)** | D iter\u22652, H iter\u22652 | '
+            f'{fmt_mean_std(d_warm)} | {fmt_mean_std(h_warm)} | {fmt_ratio(d_warm, h_warm)} |'
+        )
+    elif h_wall:
+        lines.append(f'| **H only** | H iter\u22652 | \u2014 | {fmt_mean_std(h_warm or h_wall)} | \u2014 |')
     lines.append('')
 
     # Layer F (codspeed.yml on IB) value cell.

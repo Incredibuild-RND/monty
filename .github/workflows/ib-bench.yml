@@ -38,13 +38,32 @@ name: ib-bench
 #      instrumentation, so it exercises a different rustc cache key
 #      space and is the cleanest signal for the every-PR codspeed
 #      benchmark workflow.
+#   H  incredibuild-runner, manylinux_2_28 GHA `container:` block,
+#      synthetic workload (cargo test --no-run -p monty) under
+#      ib_console. Validates Layer B from monty-ib-cross-repo-strategy:
+#      the existing vnext-processing-engine container-hooks/index.js
+#      bind-mounts /ib-workspace + /opt/incredibuild into a manylinux
+#      container, so every Linux wheel-build matrix entry (build job
+#      lines 587-617 + build-pgo line 654) becomes IB-cacheable simply
+#      by switching from `runs-on: ubuntu-latest` + maturin-action's
+#      child docker to `runs-on: incredibuild-runner` + GHA-level
+#      `container:`. ib-probe.yml's manylinux-probe job already proved
+#      the volume mount + ib_console resolution + ib_server connect
+#      inside the container; H closes the loop by measuring the
+#      end-to-end speedup. Compare H_warm to D_warm — if within ~10%,
+#      container-ization adds no overhead and the cache is genuinely
+#      shared host↔container (i.e. expanding to all 8 manylinux
+#      matrix entries is safe).
 #
 # C must run before D on the same runner so D inherits a populated
 # /etc/incredibuild/cache/build_cache/shared/ from C. F is chained after
 # D to keep IB cache state predictable across the run. G is chained
 # after F to inherit F's warm test-rust cache (G's shim writes the
 # same cache keys F did). I runs in parallel with F/G — its codspeed
-# crate keys don't overlap with the llvm-cov crate keys.
+# crate keys don't overlap with the llvm-cov crate keys. H runs in
+# parallel with the host-side cells — its cargo binary lives inside
+# a separate rustup install in the container, so its rustc cache
+# keys are disjoint from D/F/G's.
 
 on:
   workflow_dispatch:
@@ -573,6 +592,141 @@ jobs:
         if: always()
         run: ./scripts/ib-stats.sh
 
+  cell-H-ib-manylinux:
+    # Layer B validation: run cargo+ib_console inside the manylinux_2_28
+    # container that monty's wheel-build matrix already targets via
+    # PyO3/maturin-action. Crucially this uses a GHA-level `container:`
+    # block (not maturin-action's child docker), which is what fires
+    # vnext-processing-engine's container-hooks/index.js and bind-mounts
+    # /ib-workspace + /opt/incredibuild into the container. ib-probe.yml's
+    # manylinux-probe job confirmed the hook fires, /usr/bin/ib_console
+    # resolves under glibc 2.28, and the smoke `--standalone --no-monitor
+    # -- /bin/true` connects to ib_server. H now measures the actual
+    # speedup on a real Rust compile workload.
+    name: bench cell H (manylinux container, IB)
+    runs-on: incredibuild-runner
+    timeout-minutes: 30
+    container:
+      # Pinned by manifest digest to satisfy zizmor unpinned-images.
+      # Same digest as ib-probe.yml::manylinux-probe so the two jobs
+      # measure the same image. Refresh by querying:
+      #   https://quay.io/api/v1/repository/pypa/manylinux_2_28_x86_64?includeTags=true
+      image: quay.io/pypa/manylinux_2_28_x86_64@sha256:443eabd378e140996780a772e12c1a1ef10551da933fe76d74a1bab61f68a7b7
+    env:
+      # The container has no rustup preinstalled; the install step puts
+      # cargo at $HOME/.cargo/bin. Use isolated CARGO_HOME / target paths
+      # under $GITHUB_WORKSPACE so the container's cargo doesn't collide
+      # with the host's CARGO_HOME from cells B/C/D/F/G/I.
+      CARGO_HOME: ${{ github.workspace }}/.cargo-h
+      RUSTUP_HOME: ${{ github.workspace }}/.rustup-h
+      CARGO_TARGET_DIR: ${{ github.workspace }}/target-h
+      # Cap rustc parallelism the same way cells F/G do — keeps the
+      # workload comparable to the host-side cells and stays well under
+      # the runner wall-clock cap.
+      IB_MAX_LOCAL_CORES: '8'
+      LANG: C.UTF-8
+      LC_ALL: C.UTF-8
+      PYTHONUTF8: '1'
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: prove the container hook fired
+        # Sanity check that mirrors ib-probe.yml's manylinux-probe job.
+        # If any of these fail the rest of the cell is meaningless, so
+        # surface the failure early instead of having the cargo step
+        # report a confusing "ib_console: command not found".
+        run: |
+          set -euo pipefail
+          echo "::group::container hook artifacts"
+          test -d /ib-workspace/cache || { echo "::error::/ib-workspace/cache missing — container hook did not fire"; exit 1; }
+          test -d /ib-workspace/incredibuild || { echo "::error::/ib-workspace/incredibuild missing"; exit 1; }
+          test -x /usr/bin/ib_console || { echo "::error::/usr/bin/ib_console not present"; exit 1; }
+          /usr/bin/ib_console --full-version | head -3
+          echo "::endgroup::"
+
+      - name: install rustup + stable toolchain (in-container)
+        # The manylinux_2_28 image ships its own rustup at /opt/_internal
+        # but only for the in-tree CPython builds. For our cargo workload
+        # we install a fresh rustup in $RUSTUP_HOME under $GITHUB_WORKSPACE
+        # so iterations are reproducible.
+        run: |
+          set -euo pipefail
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+            | sh -s -- -y --default-toolchain stable --profile minimal
+          echo "$CARGO_HOME/bin" >> "$GITHUB_PATH"
+          "$CARGO_HOME/bin/rustc" --version
+          "$CARGO_HOME/bin/cargo" --version
+
+      - name: set up python (in-container)
+        # The manylinux image ships /opt/python/cpython-3.x but not on
+        # PATH; the bench script's Python helper (ib-bench-summarize.py
+        # is invoked OUT of this cell, but ib-prep.sh and ib-stats.sh
+        # both shell out to /usr/bin/python3 if available) needs python3.
+        run: |
+          set -euo pipefail
+          ln -sf /opt/python/cp312-cp312/bin/python3 /usr/local/bin/python3 || \
+            ln -sf "$(ls /opt/python/cp312-*/bin/python3 2>/dev/null | head -1)" /usr/local/bin/python3 || \
+            echo "no cp312 python found in /opt/python — leaving as is"
+          python3 --version || echo "python3 not available; ib-prep/stats may degrade gracefully"
+
+      - run: rm -f .cargo/config.toml
+
+      - name: bench cell H (synthetic workload, manylinux container, IB warm)
+        env:
+          CELL: H
+          # iter 1 fills the IB cache from cold (the container's rustc
+          # output keys are disjoint from D's host-side cache because
+          # rustc binary path differs). iter 2 measures warm steady state.
+          ITERATIONS: '2'
+          WORKLOAD: synthetic
+          # Use the cargo on PATH (rustup-installed in $CARGO_HOME/bin).
+          # ib-bench-run.sh's auto-fallback to ./scripts/cargo-ib.sh
+          # only triggers on host runners; inside the container we call
+          # ib_console directly via the env override below.
+          CARGO_BIN: cargo
+          # Force the dispatcher to wrap cargo with ib_console using the
+          # same flag set as cargo-ib.sh. Once Layer A lands and the
+          # runner image bundles /ib-workspace/incredibuild/ib-accel/bin/cargo,
+          # this env override goes away — the shim handles it.
+          IB_CONSOLE_BIN: /usr/bin/ib_console
+          IB_PROFILE: ${{ github.workspace }}/scripts/ib-profile.xml
+        run: |
+          set -euo pipefail
+          # Wrap cargo with ib_console for this cell only. Mirrors the
+          # cargo-ib.sh body but inlined so we don't depend on the
+          # host-side script (the path may not be exec'able from inside
+          # the container if the workspace mount loses +x).
+          mkdir -p "$RUNNER_TEMP/h-shim"
+          cat > "$RUNNER_TEMP/h-shim/cargo" <<'EOF'
+          #!/bin/bash
+          set -euo pipefail
+          if [[ -n "${__IB_CARGO_WRAPPED:-}" ]]; then
+              exec "$CARGO_HOME/bin/cargo" "$@"
+          fi
+          export __IB_CARGO_WRAPPED=1
+          exec /usr/bin/ib_console \
+              --standalone \
+              --build-cache-local-shared \
+              --build-cache-force \
+              --build-cache-basedir="$PWD" \
+              "$CARGO_HOME/bin/cargo" "$@"
+          EOF
+          chmod +x "$RUNNER_TEMP/h-shim/cargo"
+          export PATH="$RUNNER_TEMP/h-shim:$PATH"
+          ./scripts/ib-bench-run.sh
+
+      - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: bench-cell-H
+          path: bench-results/H.csv
+          if-no-files-found: error
+
+      - name: IB cache stats
+        if: always()
+        run: ./scripts/ib-stats.sh || true
+
   summarize:
     needs:
       - cell-A-ubuntu-no-ib
@@ -582,6 +736,7 @@ jobs:
       - cell-E-ubuntu-test-rust
       - cell-F-ib-test-rust
       - cell-G-ib-shim-simulation
+      - cell-H-ib-manylinux
       - cell-I-ib-codspeed
     if: always()
     runs-on: ubuntu-latest
@@ -602,7 +757,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p bench-results
-          for cell in A B C D E F G I; do
+          for cell in A B C D E F G H I; do
             src="bench-artifacts/bench-cell-$cell/$cell.csv"
             if [ -f "$src" ]; then
               cp "$src" "bench-results/$cell.csv"

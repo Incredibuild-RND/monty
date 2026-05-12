@@ -79,36 +79,51 @@ the green light to merge.
 
 ---
 
-## Layer B — manylinux Docker container probe
+## Layer B — manylinux Docker container probe — **GREEN**
 
 **Where**: `manylinux-probe` job in
 [`.github/workflows/ib-probe.yml`](./.github/workflows/ib-probe.yml).
 
-**The hypothesis**: `vnext-processing-engine`'s
-`src/runner_engine/build/container-hooks/index.js` lines 11–14 already
-declare `IB_EXTRA_VOLUMES` for `/ib-workspace/incredibuild` and
-`/ib-workspace/cache`, and run `job_started.sh` inside the spawned
-container. If `ib_console` resolves and runs under manylinux's older
-glibc (2.28), then **the entire wheel-build matrix is already
-IB-reachable** and no vnext code change is needed.
+**Status**: validated end-to-end on
+[run 25726192172](https://github.com/Incredibuild-RND/monty/actions/runs/25726192172).
+Inside `quay.io/pypa/manylinux_2_28_x86_64@sha256:443eabd378e1…`:
 
-**The probe**: `runs-on: incredibuild-runner` with `container: image:
-quay.io/pypa/manylinux_2_28_x86_64`, then inside the container:
-- `ls /ib-workspace/` (verifies the volume injection fired)
-- `which ib_console` + `ls /usr/bin/ib_console` (verifies binary
-  resolution)
-- `ib_console --full-version` (verifies glibc compatibility)
-- `ib_console --standalone --no-monitor -- /bin/true` (smoke test)
+- `/ib-workspace/cache` and `/ib-workspace/incredibuild` are bind-mounted
+  by the container hook (`vnext-processing-engine/src/runner_engine/build/container-hooks/index.js`).
+- `/ib-workspace/incredibuild/ib-accel/bin` is at the front of `PATH`.
+- `/usr/bin/ib_console` is a symlink to `/opt/incredibuild/bin/ib_console`
+  (mounted from host) and runs cleanly under glibc 2.28
+  (`ib_console version [3.25.2]`).
+- The smoke test `ib_console --standalone --no-monitor -- /bin/true`
+  exits 0 with `Incredibuild System: ib_server connected, start process
+  execution...` — distribution to the in-namespace `ib_server` is live
+  inside the container, not just the standalone path.
+- `/ib-workspace/cache/uv` and `/ib-workspace/cache/pip` already exist
+  from the entrypoint hook, so any future `uv`/`pip` work inside a
+  manylinux container also gets that pre-warmed cache for free.
 
-**If green**: wire one of the 7 manylinux `build` matrix entries (e.g.,
-`linux x86_64-unknown-linux-gnu`) through IB, benchmark, and the same
-pattern applies to `linux aarch64-musl` and the rest. monty IB
-coverage goes from 7/32 (Layer F) to 15/32 (47%).
+**Implication**: the entire wheel-build matrix (the `build` job's 7
+Linux entries plus `build-pgo` linux) is IB-reachable today with no
+upstream change. Each migration is a two-line GHA edit:
+`runs-on: ubuntu-latest` → `runs-on: incredibuild-runner` and add
+`container: image: quay.io/pypa/manylinux_2_28_x86_64@sha256:…`.
 
-**If red** (most likely failure: glibc 2.28 vs ib_console's 2.39
-linkage): file an IB ticket for either (a) a statically-linked
-`ib_console`, or (b) a host-side `ib_console` proxy that the container
-hook bind-mounts so the container talks to the host's binary.
+**End-to-end validation**: `ib-bench.yml::cell-H-ib-manylinux` runs the
+synthetic workload inside the same container on `incredibuild-runner`.
+H tracking D within ~10% means container vs host adds no overhead and
+the host's IB cache is fully reachable from inside the container — the
+green light to migrate the production `build` matrix.
+
+**Caveat for monty's existing `build` job**: today it uses
+`PyO3/maturin-action`, which spawns its OWN docker container internally.
+GHA's `container-hooks` only fire when the GHA workflow itself declares
+`container:` at the job level, NOT for child docker calls made by an
+action. So Phase 8 of the closure plan needs the `build` job refactored
+to either (a) use GHA-level `container:` and call `maturin build`
+directly, or (b) inject `/ib-workspace` and `/opt/incredibuild` into
+maturin-action's child docker via `docker-options: -v
+/ib-workspace:/ib-workspace -v /opt/incredibuild:/opt/incredibuild`.
+Option (a) is cleaner and what cell-H demonstrates.
 
 ---
 
@@ -248,11 +263,13 @@ team. Each unlocks a specific structural blocker we hit:
 | **macOS IB runner pool** | `test-rust-os macos`, `build macos x86_64`, `build-pgo macos aarch64`, `build-js x86_64-apple-darwin`, `build-js aarch64-apple-darwin` (5 jobs) | Every Rust crate that publishes macOS binaries, every PyO3 wheel for macOS |
 | **Windows IB runner pool** | `test-rust-os windows`, `build windows i686`, `build-pgo windows x86_64`, `build-js x86_64-pc-windows-msvc` (4 jobs) | Same for Windows |
 | **aarch64 Linux IB pool** | `build-js aarch64-unknown-linux-gnu`, the `aarch64-musl` and `aarch64` wheels (3 jobs in monty) | Every customer building for ARM64 Linux |
-| **`ib_console` glibc 2.28 support** (or static linking) | Conditional on Layer B's probe; up to 8 manylinux Docker jobs | Every PyO3 / maturin wheel-builder |
+| **`ib_console` glibc 2.28 support** (or static linking) | ~~Conditional on Layer B's probe; up to 8 manylinux Docker jobs~~ **Already works** — Layer B GREEN, ib_console runs natively under manylinux glibc 2.28 | Every PyO3 / maturin wheel-builder |
 
 If all four ship, monty IB coverage is 27 of 32 compile-bound jobs
 (84%). The remaining 5 are install/smoke tests that compile nothing
-and have no IB applicability.
+and have no IB applicability. With Layer B already validated, the
+manylinux row above is a code change in monty (Phase 8 of the closure
+plan) rather than an IB-product item.
 
 ---
 
@@ -260,11 +277,28 @@ and have no IB applicability.
 
 1. **Approve the cross-repo strategy.** Specifically: that the `cargo
    SHIM` lives upstream in vnext-processing-engine, not in monty.
-2. **Open the vnext PR.** Branch `feat/cargo-rustc-shim` is ready;
-   needs an IB-RND reviewer.
+2. **Chase the vnext PR review.** Branch `feat/cargo-rustc-shim` is
+   open as
+   [vnext PR #210](https://github.com/Incredibuild-RND/vnext-processing-engine/pull/210);
+   `talklainerib` is requested as reviewer (he authored the SHIM
+   strategy and the ninja unwrap). All 5 CI checks green; only gate is
+   review.
 3. **Schedule a 30-min sync with IB ops** for Layer C (profile
    upload) + Layer E (cap bump). Both are config-only; one meeting.
-4. **Triage Layer B's probe outcome.** When the IB pool recovers and
-   the manylinux probe runs, decide whether to (a) wire one
-   wheel-build through IB if the probe is green, or (b) file an IB
-   ticket for static `ib_console` if it's red.
+   Suggested attendees: Sam (monty), me, an IB ops engineer with
+   write access to the hosted-grid tenant config and `Settings`
+   pool config.
+4. **~~Triage Layer B's probe outcome.~~** ✅ Done — Layer B is GREEN
+   ([run 25726192172](https://github.com/Incredibuild-RND/monty/actions/runs/25726192172)).
+   Phase 8 of the closure plan (wire one manylinux build matrix entry
+   to `incredibuild-runner` + `container:`) is unblocked and Cell H
+   added to `ib-bench.yml` to measure the speedup.
+
+### Suggested 30-min agenda for the IB-ops sync (Layer C + Layer E)
+
+| Time | Topic | Owner | Outcome |
+|---|---|---|---|
+| 0:00 – 0:05 | Context: monty IB integration status, 1.48× measured on `test-rust`, what's gating further coverage | me | shared frame |
+| 0:05 – 0:15 | Layer C — paste `scripts/ib-profile.xml` into the hosted-grid `IB_PROFILE_CONTENT` field for the monty tenant; verify a probe run picks it up via `entrypoint.sh:47-51` | IB ops | profile lives at tenant level; monty PR can delete the file |
+| 0:15 – 0:25 | Layer E — confirm current `NAMESPACE_INSTANCE_DURATION_MINUTES` for the pool serving Incredibuild-RND/monty; agree on a bump to 30 (or a dedicated `rust-heavy` label/pool) | IB ops | `lint`, `fuzz`, `test-python-coverage` can move back to IB |
+| 0:25 – 0:30 | Capture the `setarch personality` blocker (Layer F roadmap) — file a ticket if not already, decide whether to relax seccomp or document hybrid-build path | IB ops + me | ticket # captured; decision recorded |
