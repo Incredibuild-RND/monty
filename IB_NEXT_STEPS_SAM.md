@@ -17,21 +17,24 @@ beneficiary and a known risk.
 
 | Action | Who | Effort | Effect on monty | Effect on every other IB customer |
 |---|---|---|---|---|
-| Merge `feat/cargo-rustc-shim` PR (Layer A) | IB build-acceleration team | < 1 day review | `scripts/cargo-ib.sh` and `IB_PROFILE` env wiring delete from monty | Every Rust workload on the JIT runner gets free `ib_console` build cache, no per-customer wrapper needed |
+| Ship `cargo` SHIM on the runner image (Layer A) | IB build-acceleration team | **Done** — vnext PR #210 merged and Tal deployed the image | `scripts/cargo-ib.sh` deleted from monty; temporary `IB_CONSOLE_ARGS` wiring keeps the repo profile until Layer C | Every Rust workload on the JIT runner gets free `ib_console` build cache, no per-customer wrapper needed |
 | Run `manylinux-probe` job in `ib-probe.yml` (Layer B) | us — pending IB pool capacity | ~5 min CI time | If green: 8 more monty jobs (the entire wheel-build matrix) become IB-cacheable — 4/32 → 12/32 (38%) | Every Python-wheel-building customer of IB unlocked simultaneously |
 | Upload `scripts/ib-profile.xml` to your tenant's hosted-grid IB settings (Layer C) | Sam + IB ops | 5 min via the IB grid UI | `scripts/ib-profile.xml` and the `IB_PROFILE` env wiring delete from monty; profile becomes centrally-tunable without re-merging | Sets the precedent that profile config lives at the tenant level, not per-repo |
 | Bump `NAMESPACE_INSTANCE_DURATION_MINUTES` from ~12 to 30 on the Rust pool (Layer E) | IB ops | one Prefect/grid config edit | `lint` and `fuzz` jobs (currently forced to `ubuntu-latest` by the cap) move to IB; recovers a long-tail of CI time | Every Rust customer with > 12-min jobs |
 
-If only **one** of these can ship: pick **Layer A** (the cargo SHIM PR
-on vnext). It's the foundation everything else builds on, and it's
-already implemented and pushed.
+Layer A has shipped. The remaining high-leverage cleanup is Layer C:
+move the `ib_profile.xml` content to hosted-grid settings so monty can
+delete the temporary `IB_CONSOLE_ARGS` profile override.
 
 ---
 
 ## Layer A — cargo SHIM in `vnext-processing-engine`
 
-**Branch**: `feat/cargo-rustc-shim` on
-[Incredibuild-RND/vnext-processing-engine](https://github.com/Incredibuild-RND/vnext-processing-engine/tree/feat/cargo-rustc-shim)
+**Status**: shipped via
+[Incredibuild-RND/vnext-processing-engine#210](https://github.com/Incredibuild-RND/vnext-processing-engine/pull/210).
+Tal deployed the rebuilt runner image and
+[`ib-probe.yml` run 25732897099](https://github.com/Incredibuild-RND/monty/actions/runs/25732897099)
+found `/ib-workspace/incredibuild/ib-accel/bin/cargo`.
 
 **One-line summary**: Promote `cargo` from `ENV` mode to `SHIM` mode in
 `src/build_accelerator/default_rules.yaml` so its compiling subcommands
@@ -68,14 +71,16 @@ runs the same `test-rust` workload as Cell F but with monty's
 hand-mimics what this PR auto-generates. G tracking F within noise is
 the green light to merge.
 
-**Cleanup that follows the merge in monty**:
-- Delete `scripts/cargo-ib.sh` (≈100 lines, including its careful
-  comment block about `--standalone`).
-- Delete `CARGO=./scripts/cargo-ib.sh` env wiring from `ci.yml`
-  (`test-python-coverage`, `codspeed.yml`, `build-js` Linux entries).
-- Delete `CARGO_BIN: ./scripts/cargo-ib.sh` from
+**Cleanup now applied in monty**:
+- Deleted `scripts/cargo-ib.sh`.
+- Deleted `CARGO=./scripts/cargo-ib.sh` env wiring from `ci.yml`
+  (`test-python-coverage`, `build-js` Linux entries).
+- Deleted `CARGO_BIN: ./scripts/cargo-ib.sh` from
   `ib-bench.yml::cell-F-ib-test-rust` and `cell-I-ib-codspeed`.
-- Keep `scripts/ib-prep.sh` (it's a cache-stats setup, not a wrapper).
+- Kept `scripts/ib-prep.sh`; it now exports `IB_CONSOLE_ARGS` so the
+  runner-image cargo shim still receives monty's rustc profile and
+  per-job cache logfile until Layer C moves the profile to hosted-grid
+  settings.
 
 ---
 
@@ -231,9 +236,9 @@ Status of each on `ci/incredibuild-runners`:
   `ib-stats.sh` only fire when `matrix.settings.host ==
   'incredibuild-runner'`, so the matrix pattern stays clean.
 
-After Layer A merges, the `CARGO=$(pwd)/scripts/cargo-ib.sh` lines
-become unnecessary — the runner image's auto-generated `cargo` shim
-takes over via `$PATH`.
+Layer A has merged and deployed. The `CARGO=$(pwd)/scripts/cargo-ib.sh`
+lines are gone; the runner image's auto-generated `cargo` shim takes
+over via `$PATH`.
 
 ### New roadmap item discovered: IB runner needs `setarch personality`
 
@@ -277,12 +282,9 @@ plan) rather than an IB-product item.
 
 1. **Approve the cross-repo strategy.** Specifically: that the `cargo
    SHIM` lives upstream in vnext-processing-engine, not in monty.
-2. **Chase the vnext PR review.** Branch `feat/cargo-rustc-shim` is
-   open as
-   [vnext PR #210](https://github.com/Incredibuild-RND/vnext-processing-engine/pull/210);
-   `talklainerib` is requested as reviewer (he authored the SHIM
-   strategy and the ninja unwrap). All 5 CI checks green; only gate is
-   review.
+2. **Layer A is done.** [vnext PR #210](https://github.com/Incredibuild-RND/vnext-processing-engine/pull/210)
+   merged, Tal deployed the image, and monty's probe found the live
+   cargo shim.
 3. **Schedule a 30-min sync with IB ops** for Layer C (profile
    upload) + Layer E (cap bump). Both are config-only; one meeting.
    Suggested attendees: Sam (monty), me, an IB ops engineer with

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Runs a deterministic cargo workload N times under whatever cargo flavour
-# the surrounding job sets (plain cargo for cell A/E, cargo-ib.sh for
-# cells B/C/D/F), captures wall-clock + IB cache HIT/MISS + cache-dir-size
+# the surrounding job sets (plain cargo on ubuntu-latest, runner-image cargo
+# shim on incredibuild-runner), captures wall-clock + IB cache HIT/MISS + cache-dir-size
 # deltas + final target/ size, and emits one CSV row per iteration to
 # bench-results/$CELL.csv.
 #
@@ -19,10 +19,10 @@
 #               the synthetic workload.
 #
 # Cargo dispatcher:
-#   - explicit `CARGO_BIN` env wins (cells E/F set this);
-#   - otherwise, on a host with /usr/bin/ib_console for cells B/C/D,
-#     route through ./scripts/cargo-ib.sh;
-#   - otherwise, plain `cargo` (cell A and any non-IB host).
+#   - explicit `CARGO_BIN` env wins;
+#   - otherwise, use PATH-resolved `cargo`. On incredibuild-runner this is
+#     the vnext-processing-engine generated cargo shim; elsewhere it is
+#     plain cargo.
 #
 # CSV columns (one row per iteration; for multi-call workloads,
 # wall/user/sys are summed across calls and rss is the per-call max):
@@ -50,8 +50,6 @@ echo "iteration,wall_seconds,user_seconds,sys_seconds,max_rss_kb,hits,misses,cac
 if [ -n "${CARGO_BIN:-}" ]; then
     # shellcheck disable=SC2206  # caller-controlled, intentional split
     CARGO_RUNNER=($CARGO_BIN)
-elif [ -x /usr/bin/ib_console ] && [ "$CELL" != "A" ]; then
-    CARGO_RUNNER=(./scripts/cargo-ib.sh)
 else
     CARGO_RUNNER=(cargo)
 fi

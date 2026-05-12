@@ -21,17 +21,18 @@ name: ib-bench
 #   E  ubuntu-latest, plain cargo, real test-rust workload. The
 #      "what would test-rust cost on ubuntu-latest" baseline that
 #      previously had to be inferred from CI logs.
-#   F  incredibuild-runner, cargo-ib.sh (rustc cached), real test-rust
-#      workload, warm cache. Chained after D so D's cache state is
-#      stable and F's iter≥2 measures realistic warm-cache steady state.
+#   F  incredibuild-runner, runner-image cargo SHIM (rustc cached),
+#      real test-rust workload, warm cache. Chained after D so D's
+#      cache state is stable and F's iter≥2 measures realistic
+#      warm-cache steady state.
 #   G  incredibuild-runner, real test-rust workload via PATH-prepended
 #      cargo SHIM that mimics what vnext-processing-engine's
 #      build_accelerator/default_rules.yaml WOULD generate if
 #      cargo were upgraded from ENV mode to SHIM mode (Layer A in
 #      the cross-repo plan). Validates that monty works end-to-end
-#      with NO cargo-ib.sh in the repo — only the runner image's
-#      build accelerator. Should match F within noise once Layer A
-#      ships upstream.
+#      with NO repo-local cargo wrapper — only the runner image's
+#      build accelerator. Now that Layer A ships upstream, G should
+#      continue to match F within noise.
 #   I  incredibuild-runner, codspeed workload (cargo codspeed build),
 #      warm cache. Measures the gain from wiring codspeed.yml to IB
 #      (Layer F). Same crate set as test-rust but built with codspeed
@@ -83,7 +84,6 @@ on:
       - .github/workflows/ib-bench.yml
       - scripts/ib-bench-run.sh
       - scripts/ib-bench-summarize.py
-      - scripts/cargo-ib.sh
       - scripts/ib-profile.xml
 
 permissions: {}
@@ -161,8 +161,8 @@ jobs:
       LANG: C.UTF-8
       LC_ALL: C.UTF-8
       PYTHONUTF8: '1'
-      # IB_NO_CACHE makes cargo-ib.sh omit --profile, leaving the
-      # system default profile (rustc not cached).
+      # IB_NO_CACHE makes ib-prep.sh omit --profile from IB_CONSOLE_ARGS,
+      # leaving the system default profile (rustc not cached).
       IB_NO_CACHE: '1'
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -409,7 +409,7 @@ jobs:
           CELL: F
           ITERATIONS: '2'
           WORKLOAD: test-rust
-          CARGO_BIN: ./scripts/cargo-ib.sh
+          CARGO_BIN: cargo
           # IB pre-flight already exports IB_PROFILE via $GITHUB_ENV; we
           # set it explicitly here to make the cell self-describing and
           # robust against future ib-prep.sh changes.
@@ -513,8 +513,7 @@ jobs:
           ITERATIONS: '2'
           WORKLOAD: test-rust
           # Force the dispatcher to use the PATH-resolved cargo (which
-          # is now our shim). Bypasses ib-bench-run.sh's auto-fallback
-          # to ./scripts/cargo-ib.sh on IB hosts.
+          # is now our shim).
           CARGO_BIN: cargo
           IB_PROFILE: ${{ github.workspace }}/scripts/ib-profile.xml
         run: ./scripts/ib-bench-run.sh
@@ -541,7 +540,6 @@ jobs:
     env:
       CARGO_HOME: ${{ github.workspace }}/.cargo
       CARGO_TARGET_DIR: ${{ github.workspace }}/target
-      CARGO: ${{ github.workspace }}/scripts/cargo-ib.sh
       IB_MAX_LOCAL_CORES: '8'
       LANG: C.UTF-8
       LC_ALL: C.UTF-8
@@ -578,7 +576,7 @@ jobs:
           CELL: I
           ITERATIONS: '2'
           WORKLOAD: codspeed
-          CARGO_BIN: ./scripts/cargo-ib.sh
+          CARGO_BIN: cargo
           IB_PROFILE: ${{ github.workspace }}/scripts/ib-profile.xml
         run: ./scripts/ib-bench-run.sh
 
@@ -682,22 +680,21 @@ jobs:
           ITERATIONS: '2'
           WORKLOAD: synthetic
           # Use the cargo on PATH (rustup-installed in $CARGO_HOME/bin).
-          # ib-bench-run.sh's auto-fallback to ./scripts/cargo-ib.sh
-          # only triggers on host runners; inside the container we call
-          # ib_console directly via the env override below.
+          # Use the cargo on PATH (rustup-installed in $CARGO_HOME/bin).
+          # Inside the container we call ib_console directly via the
+          # wrapper below.
           CARGO_BIN: cargo
           # Force the dispatcher to wrap cargo with ib_console using the
-          # same flag set as cargo-ib.sh. Once Layer A lands and the
-          # runner image bundles /ib-workspace/incredibuild/ib-accel/bin/cargo,
-          # this env override goes away — the shim handles it.
+          # same flag set as the runner image cargo shim. Once the
+          # manylinux container uses that shim directly, this env override
+          # goes away.
           IB_CONSOLE_BIN: /usr/bin/ib_console
           IB_PROFILE: ${{ github.workspace }}/scripts/ib-profile.xml
         run: |
           set -euo pipefail
           # Wrap cargo with ib_console for this cell only. Mirrors the
-          # cargo-ib.sh body but inlined so we don't depend on the
-          # host-side script (the path may not be exec'able from inside
-          # the container if the workspace mount loses +x).
+          # Cargo wrapper inlined so we don't depend on a host-side script
+          # inside the manylinux container.
           mkdir -p "$RUNNER_TEMP/h-shim"
           cat > "$RUNNER_TEMP/h-shim/cargo" <<'EOF'
           #!/bin/bash

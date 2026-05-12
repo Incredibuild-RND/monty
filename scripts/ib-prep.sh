@@ -80,24 +80,35 @@ else
 fi
 ls -la scripts/ib-profile.xml 2>/dev/null || true
 
-# 2b. export IB_CACHE_LOG / IB_PROFILE for cargo-ib.sh -------------------
+# 2b. export IB_CACHE_LOG / IB_PROFILE / IB_CONSOLE_ARGS ------------------
 # Logfile path must be ABSOLUTE (XgConsole_main.cpp:482). We put it under
 # /etc/incredibuild/log/ — the canonical IB log dir on the runner image
 # (ib-stats.sh already greps there), which survives any chroot/namespace
 # teardown ib_console may do for intercepted processes. Per-job filename
 # so concurrent jobs on the same runner don't stomp each other's log.
+#
+# The vnext-processing-engine cargo shim reads IB_CONSOLE_ARGS and uses it
+# instead of its built-in default args. Until Phase 6 moves ib-profile.xml
+# into hosted-grid settings, this is how monty keeps the rustc cache profile
+# and per-job cache logfile while deleting the repo-local cargo wrapper.
 if [ -n "${GITHUB_ENV:-}" ]; then
     job_id="${GITHUB_JOB:-local}_${GITHUB_RUN_ID:-0}_${GITHUB_RUN_ATTEMPT:-1}"
     log_path="/etc/incredibuild/log/ib_cache_${job_id}.log"
     profile_path="$PWD/scripts/ib-profile.xml"
+    ib_console_args="--standalone --build-cache-local-shared --build-cache-force --build-cache-basedir=$PWD --build-cache-local-logfile=$log_path --build-cache-report-all-miss --no-monitor"
+    if [ -z "${IB_NO_CACHE:-}" ]; then
+        ib_console_args="$ib_console_args --profile=$profile_path"
+    fi
     {
         echo "IB_CACHE_LOG=$log_path"
         echo "IB_PROFILE=$profile_path"
+        echo "IB_CONSOLE_ARGS=$ib_console_args"
     } >> "$GITHUB_ENV"
     echo "IB_CACHE_LOG=$log_path"
     echo "IB_PROFILE=$profile_path"
+    echo "IB_CONSOLE_ARGS=$ib_console_args"
     # mkdir at root may need sudo if not already root; tolerate failure
-    # (cargo-ib.sh re-tries the mkdir).
+    # (the runner cargo shim / ib_console will report if logging fails).
     if is_root; then
         mkdir -p /etc/incredibuild/log 2>/dev/null || true
     else

@@ -141,23 +141,23 @@ jobs:
       - run: python3 -V
         # don't use .venv python in CI
       - run: rm .cargo/config.toml
-      - run: ./scripts/cargo-ib.sh llvm-cov clean --workspace
+      - run: cargo llvm-cov clean --workspace
 
       # coverage for `make test-no-features`
-      - run: ./scripts/cargo-ib.sh llvm-cov --no-report -p monty
-      - run: ./scripts/cargo-ib.sh llvm-cov run --no-report -p monty-datatest
+      - run: cargo llvm-cov --no-report -p monty
+      - run: cargo llvm-cov run --no-report -p monty-datatest
       # coverage for `make test-memory-model-checks`
-      - run: ./scripts/cargo-ib.sh llvm-cov --no-report -p monty --features memory-model-checks
-      - run: ./scripts/cargo-ib.sh llvm-cov run --no-report -p monty-datatest --features memory-model-checks
+      - run: cargo llvm-cov --no-report -p monty --features memory-model-checks
+      - run: cargo llvm-cov run --no-report -p monty-datatest --features memory-model-checks
       # coverage for `make test-ref-count-return`
-      - run: ./scripts/cargo-ib.sh llvm-cov --no-report -p monty --features ref-count-return
-      - run: ./scripts/cargo-ib.sh llvm-cov run --no-report -p monty-datatest --features ref-count-return
+      - run: cargo llvm-cov --no-report -p monty --features ref-count-return
+      - run: cargo llvm-cov run --no-report -p monty-datatest --features ref-count-return
       # coverage for `make test-type-checking`
-      - run: ./scripts/cargo-ib.sh llvm-cov --no-report -p monty_type_checking -p monty_typeshed
+      - run: cargo llvm-cov --no-report -p monty_type_checking -p monty_typeshed
       # Generating text report:
-      - run: ./scripts/cargo-ib.sh llvm-cov report --ignore-filename-regex "$LLVM_COV_IGNORE_FILENAME_REGEX"
+      - run: cargo llvm-cov report --ignore-filename-regex "$LLVM_COV_IGNORE_FILENAME_REGEX"
       # Generate codecov report (use `report` subcommand to avoid recompilation)
-      - run: ./scripts/cargo-ib.sh llvm-cov report --codecov --output-path=rust-coverage.json --ignore-filename-regex "$LLVM_COV_IGNORE_FILENAME_REGEX"
+      - run: cargo llvm-cov report --codecov --output-path=rust-coverage.json --ignore-filename-regex "$LLVM_COV_IGNORE_FILENAME_REGEX"
 
       - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
         with:
@@ -175,22 +175,6 @@ jobs:
     env:
       CARGO_HOME: ${{ github.workspace }}/.cargo
       CARGO_TARGET_DIR: ${{ github.workspace }}/target
-      # Route maturin's INTERNAL cargo invocation through ib_console
-      # by the cargo `CARGO=<path>` env-var contract (cargo respects
-      # this and uses the indicated binary instead of `cargo`).
-      #
-      # Why only cargo, and not pytest / uv / maturin itself?
-      #   - The heavy work in this job is rustc (cargo build of the
-      #     pyo3 extension via maturin). Cached via the rustc entry
-      #     in scripts/ib-profile.xml.
-      #   - pytest, uv run, and maturin's top-level driver are
-      #     Python interpreters orchestrating dynamic .py imports
-      #     and venv copying. ib_console's cache key is
-      #     argv + literal-file-args, not the import graph; wrapping
-      #     these would never produce a meaningful cache hit and
-      #     would only add ib_console's startup overhead per call.
-      # See scripts/cargo-ib.sh top comment for the full rule.
-      CARGO: ${{ github.workspace }}/scripts/cargo-ib.sh
       # IB runner cap mitigation, see test-rust comment.
       IB_MAX_LOCAL_CORES: '4'
       IB_PREVENT_OVERLOAD: '1'
@@ -237,20 +221,17 @@ jobs:
       - run: rm .cargo/config.toml
 
       - name: Build and test Python bindings and run pytest with Rust coverage
-        # CARGO env is set at job level so maturin's internal cargo invocation
-        # goes through cargo-ib.sh. We call `cargo llvm-cov show-env` via
-        # plain cargo (not the wrapper) because that subcommand only emits
-        # env discovery — wrapping it would mix ib_console's "ib_server
-        # connected" stdout chatter into the output we eval, producing
-        # 'Incredibuild: command not found'.
+        # The runner image's cargo shim wraps maturin's internal compiling
+        # cargo subcommands through ib_console. `cargo llvm-cov show-env`
+        # remains a metadata-only subcommand and is intentionally not wrapped.
         run: |
           set -euxo pipefail
           eval "$(cargo llvm-cov show-env --export-prefix)"
-          ./scripts/cargo-ib.sh llvm-cov clean --workspace
+          cargo llvm-cov clean --workspace
           uv run maturin develop --uv -m crates/monty-python/Cargo.toml
           uv run --package pydantic-monty --only-dev pytest crates/monty-python/tests
-          ./scripts/cargo-ib.sh llvm-cov report --ignore-filename-regex "$LLVM_COV_IGNORE_FILENAME_REGEX"
-          ./scripts/cargo-ib.sh llvm-cov report --codecov --output-path=python-rust-coverage.json --ignore-filename-regex "$LLVM_COV_IGNORE_FILENAME_REGEX"
+          cargo llvm-cov report --ignore-filename-regex "$LLVM_COV_IGNORE_FILENAME_REGEX"
+          cargo llvm-cov report --codecov --output-path=python-rust-coverage.json --ignore-filename-regex "$LLVM_COV_IGNORE_FILENAME_REGEX"
 
       - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
         with:
@@ -433,7 +414,7 @@ jobs:
 
       - run: rm .cargo/config.toml
 
-      - run: ./scripts/cargo-ib.sh bench --profile dev -p monty-bench --bench main -- --test
+      - run: cargo bench --profile dev -p monty-bench --bench main -- --test
 
       - name: IB cache stats
         if: always()
@@ -477,7 +458,7 @@ jobs:
       - run: rm .cargo/config.toml
 
       - name: Run miri tests
-        run: ./scripts/cargo-ib.sh +nightly miri test -p monty --lib
+        run: cargo +nightly miri test -p monty --lib
 
       - name: IB cache stats
         if: always()
@@ -886,15 +867,13 @@ jobs:
             target/
           key: ${{ matrix.settings.target }}-cargo-${{ matrix.settings.host }}
 
-      # IB pre-flight + env: only on incredibuild-runner. napi-rs
-      # (invoked by `npm run build:napi`) honors $CARGO and routes
-      # its internal cargo subcommand through our wrapper, which
-      # invokes /usr/bin/ib_console for build-cache.
+      # IB pre-flight + env: only on incredibuild-runner. The runner
+      # image's cargo shim wraps napi-rs' compiling cargo subcommands
+      # through /usr/bin/ib_console for build-cache automatically.
       - name: IB env (Linux IB only)
         if: matrix.settings.host == 'incredibuild-runner'
         run: |
           {
-            echo "CARGO=$(pwd)/scripts/cargo-ib.sh"
             echo "IB_MAX_LOCAL_CORES=4"
             echo "IB_PREVENT_OVERLOAD=1"
           } >> "$GITHUB_ENV"

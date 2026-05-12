@@ -935,7 +935,7 @@ isolation we hit on the wheel-build matrix:
 
 | Layer | Owner | Deliverable | Status |
 |---|---|---|---|
-| **A — cargo SHIM upstream** | us → vnext PR | Promote cargo from ENV to SHIM in `default_rules.yaml`, regenerate `ib-accel/bin/cargo`, 6 new integration tests + 83 unit tests passing | [Vnext PR #210](https://github.com/Incredibuild-RND/vnext-processing-engine/pull/210) open; all 5 CI checks GREEN; reviewer (`talklainerib`) requested |
+| **A — cargo SHIM upstream** | us → vnext PR | Promote cargo from ENV to SHIM in `default_rules.yaml`, regenerate `ib-accel/bin/cargo`, 6 new integration tests + 83 unit tests passing | **Shipped** — [vnext PR #210](https://github.com/Incredibuild-RND/vnext-processing-engine/pull/210) merged, Tal deployed the image, and [ib-probe run 25732897099](https://github.com/Incredibuild-RND/monty/actions/runs/25732897099) found `/ib-workspace/incredibuild/ib-accel/bin/cargo` |
 | **B — manylinux probe** | us → monty | Add `manylinux-probe` job to `ib-probe.yml` running `container: manylinux_2_28_x86_64` and probing `/ib-workspace`, `ib_console` resolution, glibc compat, `--standalone` smoke test | **GREEN** — [run 25726192172](https://github.com/Incredibuild-RND/monty/actions/runs/25726192172) confirms `/ib-workspace/cache` + `/ib-workspace/incredibuild` mounted, `/usr/bin/ib_console` v3.25.2 runs under glibc 2.28, `--standalone --no-monitor -- /bin/true` connects to `ib_server` |
 | **C — hosted-grid IB profile** | Sam + IB ops | Move `scripts/ib-profile.xml` content to tenant's hosted-grid IB settings (`IB_PROFILE_CONTENT` path in `vnext-processing-engine/src/runner_engine/flows.py:109-142`); delete `IB_PROFILE` env wiring from monty | Documented in `IB_NEXT_STEPS_SAM.md` (this PR) |
 | **D — stable cache key** | us | Already correct: `cache_key = md5(tenant-repo-workflow-job)` is branch-agnostic by default. `override_cache_key` on the workflow_job exposed for cross-job sharing if we ever want `test-rust` + `bench-test` to share a target/ dir | Documented |
@@ -947,13 +947,11 @@ isolation we hit on the wheel-build matrix:
 
 Three new cells extend the existing A–F matrix:
 
-- **Cell G — Layer-A SHIM simulation.** Same `test-rust` workload as
-  cell F, but cargo is dispatched via a `PATH`-prepended shim that
-  hand-mimics what `vnext-processing-engine`'s `default_rules.yaml`
-  would auto-generate (the contents of branch
-  `feat/cargo-rustc-shim`'s `ib-accel/bin/cargo`). G tracking F within
-  noise is the green light to retire `scripts/cargo-ib.sh` from monty
-  the moment Layer A lands and the runner image rebuilds.
+- **Cell G — Layer-A SHIM canary.** Same `test-rust` workload as
+  cell F, but cargo is dispatched via a `PATH`-prepended shim. Now
+  that the runner image ships `/ib-workspace/incredibuild/ib-accel/bin/cargo`,
+  G tracking F within noise validates that the live image-side shim and
+  the canary path behave the same.
 - **Cell H — Layer-B manylinux container validation.** Same synthetic
   `cargo test --no-run -p monty` workload as cell D, but inside a
   GHA-level `container: image: quay.io/pypa/manylinux_2_28_x86_64` block
@@ -982,7 +980,7 @@ extended speedup table automatically.
 | Pre-PR (no IB integration) | 0 of 32 (0%) |
 | Today (this PR's `ci.yml::test-rust` + `test-python-coverage` + `bench-test` + `miri`) | 4 of 32 (12.5%) |
 | + Layer F (3 wirings, codspeed reverted to ubuntu) | 6 of 32 (19%) |
-| + Layer A landed in vnext (cargo SHIM auto-applies) | 6 of 32, but `cargo-ib.sh` retires → cleaner monty repo |
+| + Layer A landed in vnext (cargo SHIM auto-applies) | 6 of 32; `scripts/cargo-ib.sh` retired from monty |
 | + Layer B GREEN — manylinux Docker reachable (Phase 8 wires 1, then 8) | 14 of 32 (44%) |
 | + Layer E (cap bumped, lint/fuzz/test-python-coverage back on IB) | 17 of 32 (53%) |
 | + Layer G (macOS/Windows/aarch64 IB pools) | 27 of 32 (84%) |

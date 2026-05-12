@@ -33,7 +33,7 @@ CELLS: list[tuple[str, str]] = [
     ('D', 'IB, custom profile (rustc cached) — WARM'),
     ('E', 'ubuntu-latest, real test-rust workload (8 cargo invocations)'),
     ('F', 'IB runner, real test-rust workload, warm cache'),
-    ('G', 'IB runner, real test-rust via Layer-A SHIM simulation (no cargo-ib.sh)'),
+    ('G', 'IB runner, real test-rust via Layer-A SHIM canary'),
     ('H', 'IB runner, manylinux_2_28 GHA container, synthetic workload, IB warm'),
     ('I', 'IB runner, codspeed build workload, warm cache'),
 ]
@@ -203,17 +203,15 @@ def main(results_dir: str) -> int:
         lines.append(f'| **E only (cell F blocked)** | E iter≥2 | {fmt_mean_std(e_warm or e_wall)} | — | — |')
     lines.append('')
 
-    # Layer A SHIM simulation: F (cargo-ib.sh wrapper in monty repo) vs G
-    # (PATH-prepended cargo shim mimicking what vnext-processing-engine
-    # would auto-generate). G should track F within noise.
-    lines.append('## Layer-A SHIM simulation (F → G)')
+    # Layer A SHIM canary: F (runner-image cargo shim) vs G
+    # (PATH-prepended cargo shim). G should track F within noise.
+    lines.append('## Layer-A SHIM canary (F → G)')
     lines.append('')
-    lines.append("Cell G runs the SAME workload as F but with monty's `scripts/cargo-ib.sh`")
-    lines.append('replaced by a PATH-prepended `cargo` shim that mimics what')
-    lines.append('`vnext-processing-engine/src/build_accelerator/default_rules.yaml`')
-    lines.append('would auto-generate if `cargo` were upgraded from ENV mode to SHIM')
-    lines.append('mode (Layer A). G tracking F within noise is the green light to')
-    lines.append('retire `scripts/cargo-ib.sh` after Layer A ships upstream.')
+    lines.append('Cell F uses the live runner-image cargo shim that ships from')
+    lines.append('`vnext-processing-engine/src/build_accelerator/default_rules.yaml`.')
+    lines.append('Cell G runs the same workload with a PATH-prepended canary shim.')
+    lines.append('G tracking F within noise confirms the image-side shim remains')
+    lines.append('compatible with monty after Layer A shipped upstream.')
     lines.append('')
     lines.append('| comparison | iters used | F wall | G wall | ratio (G/F) |')
     lines.append('|---|---|---|---|---|')
