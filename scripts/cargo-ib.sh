@@ -40,4 +40,5 @@ else
     fi
 fi
 
+export __IB_CARGO_WRAPPED=1
 exec /usr/bin/ib_console "${_ib_console_args[@]}" cargo "$@"
