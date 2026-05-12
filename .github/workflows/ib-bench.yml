@@ -70,9 +70,9 @@ on:
   workflow_dispatch:
     inputs:
       iterations:
-        description: 'Iterations per cell'
+        description: 'Iterations per cell (use 2+ for full benchmark runs)'
         type: string
-        default: '3'
+        default: '1'
   # Auto-run when the bench infrastructure itself changes on the
   # IB integration branch, so we get a fresh measurement table after
   # each tuning commit. Scoped to the bench files only — does NOT
@@ -144,7 +144,7 @@ jobs:
       - name: bench cell A
         env:
           CELL: A
-          ITERATIONS: ${{ inputs.iterations }}
+          ITERATIONS: ${{ inputs.iterations || '1' }}
         run: ./scripts/ib-bench-run.sh
 
       - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
@@ -199,7 +199,7 @@ jobs:
       - name: bench cell B
         env:
           CELL: B
-          ITERATIONS: ${{ inputs.iterations }}
+          ITERATIONS: ${{ inputs.iterations || '1' }}
         run: ./scripts/ib-bench-run.sh
 
       - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
@@ -311,7 +311,7 @@ jobs:
       - name: bench cell D (warm cache from C)
         env:
           CELL: D
-          ITERATIONS: ${{ inputs.iterations }}
+          ITERATIONS: ${{ inputs.iterations || '1' }}
         run: ./scripts/ib-bench-run.sh
 
       - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
@@ -357,11 +357,10 @@ jobs:
       - name: bench cell E (real test-rust workload, ubuntu-latest)
         env:
           CELL: E
-          # The test-rust workload does 8 cargo calls + a full target/ wipe
-          # per iteration. ITERATIONS=2 is the smallest count that gives a
-          # cold (iter 1) + steady-state (iter 2) data point while staying
-          # well inside ubuntu-latest's 30-min timeout.
-          ITERATIONS: '2'
+          # Automatic push validation uses one iteration to stay inside the
+          # IB runner cap; dispatch manually with iterations=2 for the full
+          # cold + warm comparison table.
+          ITERATIONS: ${{ inputs.iterations || '1' }}
           WORKLOAD: test-rust
           CARGO_BIN: cargo
         run: ./scripts/ib-bench-run.sh
@@ -414,7 +413,7 @@ jobs:
       - name: bench cell F (real test-rust workload, IB warm)
         env:
           CELL: F
-          ITERATIONS: '2'
+          ITERATIONS: ${{ inputs.iterations || '1' }}
           WORKLOAD: test-rust
           CARGO_BIN: ./scripts/cargo-ib.sh
           # IB pre-flight already exports IB_PROFILE via $GITHUB_ENV; we
@@ -517,7 +516,7 @@ jobs:
       - name: bench cell G (Layer-A SHIM simulation, real test-rust workload)
         env:
           CELL: G
-          ITERATIONS: '2'
+          ITERATIONS: ${{ inputs.iterations || '1' }}
           WORKLOAD: test-rust
           # Force the dispatcher to use the PATH-resolved cargo (which
           # is now our shim).
@@ -581,7 +580,7 @@ jobs:
       - name: bench cell I (codspeed build, IB warm)
         env:
           CELL: I
-          ITERATIONS: '2'
+          ITERATIONS: ${{ inputs.iterations || '1' }}
           WORKLOAD: codspeed
           CARGO_BIN: ./scripts/cargo-ib.sh
           IB_PROFILE: ${{ github.workspace }}/scripts/ib-profile.xml
@@ -684,7 +683,7 @@ jobs:
           # iter 1 fills the IB cache from cold (the container's rustc
           # output keys are disjoint from D's host-side cache because
           # rustc binary path differs). iter 2 measures warm steady state.
-          ITERATIONS: '2'
+          ITERATIONS: ${{ inputs.iterations || '1' }}
           WORKLOAD: synthetic
           # Use the cargo on PATH (rustup-installed in $CARGO_HOME/bin).
           # Use the cargo on PATH (rustup-installed in $CARGO_HOME/bin).
