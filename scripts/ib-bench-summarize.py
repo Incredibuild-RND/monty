@@ -9,8 +9,9 @@ with header:
 
 This script reads them, computes mean/stddev for wall_seconds, and writes
 a comparison table plus speedup ratios (B/A, C/A, D/A on the synthetic
-workload, and F/E on the real test-rust workload) to $GITHUB_STEP_SUMMARY
-(if set) and stdout.
+workload; F/E on the real test-rust workload; G vs F for the Layer-A
+SHIM-simulation no-regression check; I steady-state for codspeed) to
+$GITHUB_STEP_SUMMARY (if set) and stdout.
 
 Usage:
   scripts/ib-bench-summarize.py bench-results/
@@ -32,6 +33,8 @@ CELLS: list[tuple[str, str]] = [
     ('D', 'IB, custom profile (rustc cached) — WARM'),
     ('E', 'ubuntu-latest, real test-rust workload (8 cargo invocations)'),
     ('F', 'IB runner, real test-rust workload, warm cache'),
+    ('G', 'IB runner, real test-rust via Layer-A SHIM simulation (no cargo-ib.sh)'),
+    ('I', 'IB runner, codspeed build workload, warm cache'),
 ]
 
 
@@ -127,8 +130,12 @@ def main(results_dir: str) -> int:
     d_warm = fnum(cells.get('D', []), 'wall_seconds')[1:]
     e_wall = fnum(cells.get('E', []), 'wall_seconds')
     f_wall = fnum(cells.get('F', []), 'wall_seconds')
+    g_wall = fnum(cells.get('G', []), 'wall_seconds')
+    i_wall = fnum(cells.get('I', []), 'wall_seconds')
     e_warm = e_wall[1:] if len(e_wall) > 1 else e_wall
     f_warm = f_wall[1:] if len(f_wall) > 1 else f_wall
+    g_warm = g_wall[1:] if len(g_wall) > 1 else g_wall
+    i_warm = i_wall[1:] if len(i_wall) > 1 else i_wall
 
     lines.append('## Speedup vs ubuntu-latest baseline (A) — synthetic workload')
     lines.append('')
@@ -191,6 +198,48 @@ def main(results_dir: str) -> int:
         )
     elif e_wall and not f_wall:
         lines.append(f'| **E only (cell F blocked)** | E iter≥2 | {fmt_mean_std(e_warm or e_wall)} | — | — |')
+    lines.append('')
+
+    # Layer A SHIM simulation: F (cargo-ib.sh wrapper in monty repo) vs G
+    # (PATH-prepended cargo shim mimicking what vnext-processing-engine
+    # would auto-generate). G should track F within noise.
+    lines.append('## Layer-A SHIM simulation (F → G)')
+    lines.append('')
+    lines.append("Cell G runs the SAME workload as F but with monty's `scripts/cargo-ib.sh`")
+    lines.append('replaced by a PATH-prepended `cargo` shim that mimics what')
+    lines.append('`vnext-processing-engine/src/build_accelerator/default_rules.yaml`')
+    lines.append('would auto-generate if `cargo` were upgraded from ENV mode to SHIM')
+    lines.append('mode (Layer A). G tracking F within noise is the green light to')
+    lines.append('retire `scripts/cargo-ib.sh` after Layer A ships upstream.')
+    lines.append('')
+    lines.append('| comparison | iters used | F wall | G wall | ratio (G/F) |')
+    lines.append('|---|---|---|---|---|')
+    if f_warm and g_warm:
+        lines.append(
+            f'| **F → G steady (real test-rust, warm cache)** | F iter≥2, G iter≥2 | '
+            f'{fmt_mean_std(f_warm)} | {fmt_mean_std(g_warm)} | {fmt_ratio(f_warm, g_warm)} |'
+        )
+    elif g_wall:
+        lines.append(f'| **G only (cell F blocked)** | G iter≥2 | — | {fmt_mean_std(g_warm or g_wall)} | — |')
+    lines.append('')
+
+    # Layer F (codspeed.yml on IB) value cell.
+    lines.append('## Codspeed workload on IB (cell I)')
+    lines.append('')
+    lines.append('Measures the directly-wired `codspeed.yml::benchmarks` job')
+    lines.append('(`cargo codspeed build -p monty-bench --bench main`) on IB with')
+    lines.append('rustc cache warm. Codspeed builds the bench crate with')
+    lines.append('instrumentation, so its rustc keyspace is disjoint from')
+    lines.append("test-rust's — D/F warm caches do not help here.")
+    lines.append('')
+    lines.append('| cell | iter 1 (cold) | iter 2 (warm) | iter≥2 mean |')
+    lines.append('|---|---|---|---|')
+    if i_wall:
+        i1 = f'{i_wall[0]:.1f}s'
+        i2 = f'{i_wall[1]:.1f}s' if len(i_wall) > 1 else '—'
+        lines.append(f'| **I** | {i1} | {i2} | {fmt_mean_std(i_warm)} |')
+    else:
+        lines.append('| **I** | — | — | — |')
     lines.append('')
 
     # Correctness gate.

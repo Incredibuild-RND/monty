@@ -14,10 +14,27 @@ permissions:
 jobs:
   benchmarks:
     name: Run benchmarks
-    runs-on: ubuntu-latest
+    runs-on: incredibuild-runner
+    timeout-minutes: 30
+    env:
+      # Mirror test-rust's IB job env. See ci.yml::test-rust comments
+      # for why we pin per-job CARGO_HOME / CARGO_TARGET_DIR (avoid
+      # cross-job source/object corruption on the shared IB cache
+      # volume) and why IB_MAX_LOCAL_CORES=4 prevents 12-min cap hits.
+      CARGO_HOME: ${{ github.workspace }}/.cargo
+      CARGO_TARGET_DIR: ${{ github.workspace }}/target
+      # Route every cargo invocation (including cargo-codspeed's
+      # internal `cargo build`) through ib_console for build cache.
+      # cargo-codspeed reads $CARGO when present.
+      CARGO: ${{ github.workspace }}/scripts/cargo-ib.sh
+      IB_MAX_LOCAL_CORES: '4'
+      IB_PREVENT_OVERLOAD: '1'
+      LANG: C.UTF-8
+      LC_ALL: C.UTF-8
+      PYTHONUTF8: '1'
 
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
 
@@ -30,22 +47,33 @@ jobs:
         with:
           lookup-only: false # zizmor: ignore[cache-poisoning] -- Job does not produce release artifacts and does not have sensitive permissions
           cache-on-failure: true
+          save-if: false # IB cache is the cache here; Swatinem post-save hangs on this runner image
 
       - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
         with:
           python-version: '3.14'
 
+      - name: IB pre-flight
+        run: ./scripts/ib-prep.sh
+
       - name: Remove .cargo config to use system Python
         run: rm .cargo/config.toml
 
       - name: Install cargo-codspeed
+        # cargo install builds in its own tempdir; rustc invocations
+        # below the cargo subcommand still go through ib_console
+        # because $CARGO is set via the job env above.
         run: cargo install cargo-codspeed
 
       - name: Build benchmarks
-        run: cargo codspeed build -p monty-bench --bench main
+        run: ./scripts/cargo-ib.sh codspeed build -p monty-bench --bench main
 
       - name: Run benchmarks
-        uses: CodSpeedHQ/action@d872884a306dd4853acf0f584f4b706cf0cc72a2 # v4.13.0
+        uses: CodSpeedHQ/action@d872884a306dd4853acf0f584f4b706cf0cc72a2 # v4.13.0
         with:
           mode: simulation
           run: cargo codspeed run -p monty-bench --bench main
+
+      - name: IB cache stats
+        if: always()
+        run: ./scripts/ib-stats.sh

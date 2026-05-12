@@ -78,8 +78,20 @@ case "$WORKLOAD" in
             "llvm-cov --no-report -p monty_type_checking -p monty_typeshed"
         )
         ;;
+    codspeed)
+        # Mirrors .github/workflows/codspeed.yml::benchmarks. The
+        # `cargo install cargo-codspeed` step is left to the workflow
+        # (idempotent across iterations: the binary persists in
+        # CARGO_HOME/bin so iter ≥ 2 is a no-op install). Only the
+        # actual rustc-bound `cargo codspeed build` is in the workload,
+        # which is what Layer F (codspeed.yml on incredibuild-runner)
+        # actually accelerates.
+        WORKLOAD_CMDS=(
+            "codspeed build -p monty-bench --bench main"
+        )
+        ;;
     *)
-        echo "::error::unknown WORKLOAD=$WORKLOAD (expected synthetic|test-rust)"
+        echo "::error::unknown WORKLOAD=$WORKLOAD (expected synthetic|test-rust|codspeed)"
         exit 2
         ;;
 esac

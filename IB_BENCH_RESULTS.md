@@ -905,3 +905,79 @@ incremental-compiled crates that sccache structurally cannot.
 - Self-hosted runner availability is the single biggest CI risk —
   even with everything else green, an offline pool stalls the
   measurement.
+
+---
+
+## Cross-repo strategy update (2026-05-12)
+
+The original PoV stopped at "monty got 1.48× on `test-rust`". Reading
+the IB control-plane (`Incredibuild-RND/vnext-processing-engine`) and
+runtime (`Incredibuild-RND/ib_linux`) end-to-end revealed that the real
+leverage is not in monty at all. Two upstream gaps account for most of
+the 12-min cap, the `cargo-ib.sh` workaround, and the structural Docker
+isolation we hit on the wheel-build matrix:
+
+1. **`build_accelerator/default_rules.yaml` ships cargo in ENV mode
+   only.** ninja and cmake are wrapped with `ib_console
+   --build-cache-local-shared` automatically, but cargo is not.
+   Customers using Rust on the JIT runner image had to ship their own
+   wrapper (e.g., monty's `scripts/cargo-ib.sh`) to get any rustc
+   acceleration.
+2. **`runner_engine/build/container-hooks/index.js` already mounts
+   `/ib-workspace/incredibuild` and `/ib-workspace/cache` into
+   `container: image: xx` jobs**, but no Rust customer has ever
+   verified this works for the manylinux glibc baseline. If it does,
+   the 7 manylinux Docker `build` matrix entries plus `build-pgo
+   linux` (8 of monty's 32 compile-bound jobs) become IB-cacheable
+   without any vnext code change.
+
+### Layered closing plan and current status
+
+| Layer | Owner | Deliverable | Status |
+|---|---|---|---|
+| **A — cargo SHIM upstream** | us → vnext PR | Promote cargo from ENV to SHIM in `default_rules.yaml`, regenerate `ib-accel/bin/cargo`, 6 new integration tests + 83 unit tests passing | Branch `feat/cargo-rustc-shim` pushed to `Incredibuild-RND/vnext-processing-engine`; PR-ready |
+| **B — manylinux probe** | us → monty | Add `manylinux-probe` job to `ib-probe.yml` running `container: manylinux_2_28_x86_64` and probing `/ib-workspace`, `ib_console` resolution, glibc compat, `--standalone` smoke test | Committed on this branch; pending IB pool recovery to run |
+| **C — hosted-grid IB profile** | Sam + IB ops | Move `scripts/ib-profile.xml` content to tenant's hosted-grid IB settings (`IB_PROFILE_CONTENT` path in `vnext-processing-engine/src/runner_engine/flows.py:109-142`); delete `IB_PROFILE` env wiring from monty | Documented in `IB_NEXT_STEPS_SAM.md` (this PR) |
+| **D — stable cache key** | us | Already correct: `cache_key = md5(tenant-repo-workflow-job)` is branch-agnostic by default. `override_cache_key` on the workflow_job exposed for cross-job sharing if we ever want `test-rust` + `bench-test` to share a target/ dir | Documented |
+| **E — wall-clock cap** | IB ops | Bump `NAMESPACE_INSTANCE_DURATION_MINUTES` from current value (~12) to 30 for the rust-heavy pool. Single config knob in vnext (`namespace_client.py:265`). Recovers `lint`, `fuzz`, and the `test-python` matrix that today must run on `ubuntu-latest` because of the cap | Action item for IB ops |
+| **F — three monty wirings** | us | `codspeed.yml::benchmarks`, `build-js x86_64-unknown-linux-gnu`, `build-js wasm32-wasip1-threads` switched to `incredibuild-runner` with conditional IB env injection | Committed on this branch |
+| **G — roadmap** | IB product | macOS / Windows IB runners, aarch64 Linux pool. Each unlocks 5 more compile-bound jobs in monty alone. Out of scope for this PR | Documented |
+
+### New bench cells (G, I)
+
+Two new cells extend the existing A–F matrix:
+
+- **Cell G — Layer-A SHIM simulation.** Same `test-rust` workload as
+  cell F, but cargo is dispatched via a `PATH`-prepended shim that
+  hand-mimics what `vnext-processing-engine`'s `default_rules.yaml`
+  would auto-generate (the contents of branch
+  `feat/cargo-rustc-shim`'s `ib-accel/bin/cargo`). G tracking F within
+  noise is the green light to retire `scripts/cargo-ib.sh` from monty
+  the moment Layer A lands and the runner image rebuilds.
+- **Cell I — codspeed on IB warm.** `cargo codspeed build -p
+  monty-bench --bench main` on the IB runner with rustc cache warm.
+  Validates Layer F's `codspeed.yml::benchmarks` rewire. Codspeed
+  builds the bench crate with instrumentation, so its rustc keyspace
+  is disjoint from `test-rust`'s — D/F caches don't help here, so I's
+  iter-1→iter-2 ratio is the cleanest single-job signal for the
+  every-PR codspeed workflow.
+
+The summarize step in `ib-bench.yml` and `scripts/ib-bench-summarize.py`
+both know about G and I; the next workflow run will produce the
+extended speedup table automatically.
+
+### Coverage trajectory
+
+| Milestone | monty IB-cacheable jobs |
+|---|---|
+| Pre-PR (no IB integration) | 0 of 32 (0%) |
+| Today (this PR's `ci.yml::test-rust` + `test-python-coverage` + `bench-test` + `miri`) | 4 of 32 (12.5%) |
+| + Layer F (3 wirings) | 7 of 32 (22%) |
+| + Layer A landed in vnext (cargo SHIM auto-applies) | 7 of 32, but `cargo-ib.sh` retires → cleaner monty repo |
+| + Layer B verified (manylinux Docker reachable) | 15 of 32 (47%) |
+| + Layer E (cap bumped, lint/fuzz back on IB) | 17 of 32 (53%) |
+| + Layer G (macOS/Windows/aarch64 IB pools) | 27 of 32 (84%) |
+
+The remaining 5 of 32 are install/smoke jobs (`test-builds-arch`,
+`test-builds-os`) which compile nothing and have no IB applicability
+even in a perfect world.

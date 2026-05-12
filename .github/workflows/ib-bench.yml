@@ -24,10 +24,27 @@ name: ib-bench
 #   F  incredibuild-runner, cargo-ib.sh (rustc cached), real test-rust
 #      workload, warm cache. Chained after D so D's cache state is
 #      stable and F's iter≥2 measures realistic warm-cache steady state.
+#   G  incredibuild-runner, real test-rust workload via PATH-prepended
+#      cargo SHIM that mimics what vnext-processing-engine's
+#      build_accelerator/default_rules.yaml WOULD generate if
+#      cargo were upgraded from ENV mode to SHIM mode (Layer A in
+#      the cross-repo plan). Validates that monty works end-to-end
+#      with NO cargo-ib.sh in the repo — only the runner image's
+#      build accelerator. Should match F within noise once Layer A
+#      ships upstream.
+#   I  incredibuild-runner, codspeed workload (cargo codspeed build),
+#      warm cache. Measures the gain from wiring codspeed.yml to IB
+#      (Layer F). Same crate set as test-rust but built with codspeed
+#      instrumentation, so it exercises a different rustc cache key
+#      space and is the cleanest signal for the every-PR codspeed
+#      benchmark workflow.
 #
 # C must run before D on the same runner so D inherits a populated
 # /etc/incredibuild/cache/build_cache/shared/ from C. F is chained after
-# D to keep IB cache state predictable across the run.
+# D to keep IB cache state predictable across the run. G is chained
+# after F to inherit F's warm test-rust cache (G's shim writes the
+# same cache keys F did). I runs in parallel with F/G — its codspeed
+# crate keys don't overlap with the llvm-cov crate keys.
 
 on:
   workflow_dispatch:
@@ -390,6 +407,172 @@ jobs:
         if: always()
         run: ./scripts/ib-stats.sh
 
+  cell-G-ib-shim-simulation:
+    # Layer A simulation: validate that monty works end-to-end if
+    # vnext-processing-engine's build_accelerator generates a cargo
+    # shim (mirroring its existing ninja/cmake shims). G runs the
+    # SAME workload as F, but the cargo dispatch goes through a
+    # PATH-prepended shim that hand-mimics what
+    # `default_rules.yaml::cargo` SHIM mode would auto-generate.
+    needs: cell-F-ib-test-rust
+    runs-on: incredibuild-runner
+    timeout-minutes: 30
+    env:
+      CARGO_HOME: ${{ github.workspace }}/.cargo
+      CARGO_TARGET_DIR: ${{ github.workspace }}/target
+      IB_MAX_LOCAL_CORES: '8'
+      LANG: C.UTF-8
+      LC_ALL: C.UTF-8
+      PYTHONUTF8: '1'
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@efa25f7f19611383d5b0ccf2d1c8914531636bf9
+        with:
+          toolchain: stable
+          components: llvm-tools
+
+      - uses: taiki-e/install-action@1ed3272338f573e042a2e6bca3893aa19f43b47a # v2.71.3
+        with:
+          tool: cargo-llvm-cov
+
+      - name: set up python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: '3.14'
+
+      - name: IB pre-flight
+        run: ./scripts/ib-prep.sh
+
+      - run: rm -f .cargo/config.toml
+
+      - name: install Layer-A simulated cargo SHIM into PATH
+        # Mirrors the structure of
+        # vnext-processing-engine/src/runner_engine/build/ib-accel/bin/ninja
+        # (which already wraps via /usr/bin/ib_console). The real
+        # generator output for a cargo SHIM would carry subcommand
+        # whitelist logic; here we wrap unconditionally and rely on
+        # ib_console's own pass-through for non-rustc cargo work.
+        # The critical bits — exec_prefix, IB_CONSOLE_ARGS override,
+        # __IB_CARGO_WRAPPED reentry guard — match the generator.
+        run: |
+          set -euo pipefail
+          shim_dir="$RUNNER_TEMP/ib-accel-shim/bin"
+          mkdir -p "$shim_dir"
+          real_cargo="$(command -v cargo)"
+          cat > "$shim_dir/cargo" <<EOF
+          #!/bin/bash
+          # Auto-generated shim simulating vnext-processing-engine
+          # build_accelerator output for tool: cargo
+          set -euo pipefail
+          if [[ -n "\${__IB_CARGO_WRAPPED:-}" ]] || [[ -n "\${IB_CONSOLE_SKIP:-}" ]]; then
+              exec "$real_cargo" "\$@"
+          fi
+          export __IB_CARGO_WRAPPED=1
+          if [[ -n "\${IB_CONSOLE_ARGS:-}" ]]; then
+              _ib_args_expanded="\${IB_CONSOLE_ARGS//\\\$PWD/\$PWD}"
+              read -ra _ib_args <<< "\$_ib_args_expanded"
+              exec /usr/bin/ib_console "\${_ib_args[@]}" "$real_cargo" "\$@"
+          fi
+          exec /usr/bin/ib_console \\
+              --standalone \\
+              --build-cache-local-shared \\
+              --build-cache-force \\
+              --build-cache-basedir="\$PWD" \\
+              "$real_cargo" "\$@"
+          EOF
+          chmod +x "$shim_dir/cargo"
+          echo "$shim_dir" >> "$GITHUB_PATH"
+          echo "shim installed:"
+          cat "$shim_dir/cargo"
+
+      - name: bench cell G (Layer-A SHIM simulation, real test-rust workload)
+        env:
+          CELL: G
+          ITERATIONS: '2'
+          WORKLOAD: test-rust
+          # Force the dispatcher to use the PATH-resolved cargo (which
+          # is now our shim). Bypasses ib-bench-run.sh's auto-fallback
+          # to ./scripts/cargo-ib.sh on IB hosts.
+          CARGO_BIN: cargo
+          IB_PROFILE: ${{ github.workspace }}/scripts/ib-profile.xml
+        run: ./scripts/ib-bench-run.sh
+
+      - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: bench-cell-G
+          path: bench-results/G.csv
+          if-no-files-found: error
+
+      - name: IB cache stats
+        if: always()
+        run: ./scripts/ib-stats.sh
+
+  cell-I-ib-codspeed:
+    # Measures the speedup from wiring codspeed.yml's `cargo codspeed
+    # build -p monty-bench --bench main` workload through ib_console.
+    # Codspeed builds the bench crate with instrumentation, so its
+    # rustc keyspace is disjoint from test-rust's — D/F warm caches
+    # don't help here. iter 1 fills, iter 2 measures warm steady state.
+    needs: cell-D-ib-warm
+    runs-on: incredibuild-runner
+    timeout-minutes: 30
+    env:
+      CARGO_HOME: ${{ github.workspace }}/.cargo
+      CARGO_TARGET_DIR: ${{ github.workspace }}/target
+      CARGO: ${{ github.workspace }}/scripts/cargo-ib.sh
+      IB_MAX_LOCAL_CORES: '8'
+      LANG: C.UTF-8
+      LC_ALL: C.UTF-8
+      PYTHONUTF8: '1'
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@efa25f7f19611383d5b0ccf2d1c8914531636bf9
+        with:
+          toolchain: stable
+
+      - name: set up python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: '3.14'
+
+      - name: IB pre-flight
+        run: ./scripts/ib-prep.sh
+
+      - run: rm -f .cargo/config.toml
+
+      - name: install cargo-codspeed (one-time, cached in CARGO_HOME/bin)
+        # Use prebuilt binary install — avoids a 60-90s rustc compile of
+        # cargo-codspeed itself per iteration. The bench measures the
+        # codspeed BUILD step, not the cargo-codspeed install.
+        uses: taiki-e/install-action@1ed3272338f573e042a2e6bca3893aa19f43b47a # v2.71.3
+        with:
+          tool: cargo-codspeed
+
+      - name: bench cell I (codspeed build, IB warm)
+        env:
+          CELL: I
+          ITERATIONS: '2'
+          WORKLOAD: codspeed
+          CARGO_BIN: ./scripts/cargo-ib.sh
+          IB_PROFILE: ${{ github.workspace }}/scripts/ib-profile.xml
+        run: ./scripts/ib-bench-run.sh
+
+      - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: bench-cell-I
+          path: bench-results/I.csv
+          if-no-files-found: error
+
+      - name: IB cache stats
+        if: always()
+        run: ./scripts/ib-stats.sh
+
   summarize:
     needs:
       - cell-A-ubuntu-no-ib
@@ -398,6 +581,8 @@ jobs:
       - cell-D-ib-warm
       - cell-E-ubuntu-test-rust
       - cell-F-ib-test-rust
+      - cell-G-ib-shim-simulation
+      - cell-I-ib-codspeed
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -417,7 +602,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p bench-results
-          for cell in A B C D E F; do
+          for cell in A B C D E F G I; do
             src="bench-artifacts/bench-cell-$cell/$cell.csv"
             if [ -f "$src" ]; then
               cp "$src" "bench-results/$cell.csv"

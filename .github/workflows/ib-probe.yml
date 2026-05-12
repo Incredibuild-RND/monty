@@ -98,3 +98,88 @@ jobs:
 
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "Probe complete. See expanded log groups for raw output." >> "$GITHUB_STEP_SUMMARY"
+
+  manylinux-probe:
+    # Layer B from monty-ib-cross-repo-strategy: do the existing
+    # vnext-processing-engine container hooks
+    # (vnext-processing-engine/src/runner_engine/build/container-hooks/index.js
+    # lines 11-14, IB_EXTRA_VOLUMES) actually inject /ib-workspace/incredibuild,
+    # /ib-workspace/cache, and /opt/ib-accel/bin into a manylinux container
+    # spawned via GHA's `container:` block? If yes, the 7 manylinux Docker
+    # `build` matrix entries + the linux build-pgo job (8 of monty's 32
+    # compile-bound jobs) become IB-cacheable without any vnext code change.
+    # If no, we know exactly which gap to file an IB ticket for.
+    #
+    # This probe runs the REAL maturin-style cargo invocation (not a synthetic
+    # smoke test) inside the same manylinux_2_28_x86_64 image used by
+    # `PyO3/maturin-action` so the result transfers directly to the
+    # `build linux x86_64-unknown-linux-gnu` job.
+    name: IB manylinux container probe
+    runs-on: incredibuild-runner
+    timeout-minutes: 15
+    container:
+      image: quay.io/pypa/manylinux_2_28_x86_64
+    steps:
+      - name: probe IB visibility inside manylinux
+        run: |
+          set +e
+          echo "## IB manylinux container probe" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+
+          echo "::group::container identity"
+          uname -a
+          cat /etc/os-release 2>/dev/null | head -5
+          ldd --version 2>&1 | head -1
+          echo "::endgroup::"
+
+          echo "::group::IB volume mounts"
+          # The container hook is supposed to bind-mount these from the
+          # host. If they're missing, IB_EXTRA_VOLUMES is not firing.
+          ls -la /ib-workspace/ 2>&1 | head -10
+          ls -la /ib-workspace/cache/ 2>&1 | head -10
+          ls -la /ib-workspace/incredibuild/ 2>&1 | head -10
+          echo "::endgroup::"
+
+          echo "::group::ib_console resolution"
+          # The hook should also prepend /opt/ib-accel/bin to PATH and
+          # ensure /usr/bin/ib_console is reachable via the bind mount
+          # of /ib-workspace/incredibuild.
+          which ib_console 2>&1
+          ls -la /usr/bin/ib_console 2>&1
+          ls -la /ib-workspace/incredibuild/bin/ib_console 2>&1
+          echo "PATH=$PATH"
+          echo "::endgroup::"
+
+          echo "::group::ib_console glibc compatibility"
+          # manylinux_2_28's glibc baseline is 2.28 (RHEL 8). ib_console
+          # is built against Ubuntu 24.04 glibc (~2.39). If they don't
+          # match, ib_console will fail with GLIBC_2.x not found.
+          /usr/bin/ib_console --full-version 2>&1 | head -5 || \
+            /ib-workspace/incredibuild/bin/ib_console --full-version 2>&1 | head -5 || \
+            echo "ib_console not found or not executable in container"
+          echo "::endgroup::"
+
+          echo "::group::ib_console smoke test inside container"
+          # If ib_console resolves and runs, this should succeed under
+          # --standalone (which we already proved works on the bare
+          # runner via the topology probe above).
+          /usr/bin/ib_console --standalone --no-monitor -- /bin/true 2>&1 | head -20 || \
+            /ib-workspace/incredibuild/bin/ib_console --standalone --no-monitor -- /bin/true 2>&1 | head -20
+          echo "smoke exit: $?"
+          echo "::endgroup::"
+
+          echo "::group::cargo availability"
+          # manylinux_2_28 ships rustup at /opt/_internal/cargo or in
+          # /root/.cargo depending on the variant. The build matrix
+          # job installs rust via rustup explicitly, so cargo may not
+          # be on PATH yet — that's expected at probe time.
+          which cargo 2>&1 || echo "cargo not on PATH (expected for bare manylinux)"
+          ls /opt/_internal/cargo 2>&1 | head -5 || true
+          echo "::endgroup::"
+
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "manylinux container probe complete. Key questions answered:" >> "$GITHUB_STEP_SUMMARY"
+          echo "1. Are /ib-workspace volumes injected into the container? (see 'IB volume mounts' group)" >> "$GITHUB_STEP_SUMMARY"
+          echo "2. Does ib_console resolve inside the container? (see 'ib_console resolution')" >> "$GITHUB_STEP_SUMMARY"
+          echo "3. Does it run under manylinux glibc 2.28? (see 'ib_console glibc compatibility')" >> "$GITHUB_STEP_SUMMARY"
+          echo "4. Does --standalone execute end-to-end? (see 'smoke test')" >> "$GITHUB_STEP_SUMMARY"

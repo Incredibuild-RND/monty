@@ -845,7 +845,7 @@ jobs:
           - host: windows-latest
             target: x86_64-pc-windows-msvc
             build: npm run build:napi -- --target x86_64-pc-windows-msvc && npm run build:ts
-          - host: ubuntu-latest
+          - host: incredibuild-runner
             target: x86_64-unknown-linux-gnu
             build: npm run build:napi -- --target x86_64-unknown-linux-gnu --use-napi-cross && npm run build:ts
           - host: macos-latest
@@ -854,7 +854,7 @@ jobs:
           - host: ubuntu-24.04-arm
             target: aarch64-unknown-linux-gnu
             build: npm run build:napi -- --target aarch64-unknown-linux-gnu && npm run build:ts
-          - host: ubuntu-latest
+          - host: incredibuild-runner
             target: wasm32-wasip1-threads
             build: npm run build:napi -- --target wasm32-wasip1-threads && npm run build:ts
     steps:
@@ -885,6 +885,23 @@ jobs:
             .cargo-cache
             target/
           key: ${{ matrix.settings.target }}-cargo-${{ matrix.settings.host }}
+
+      # IB pre-flight + env: only on incredibuild-runner. napi-rs
+      # (invoked by `npm run build:napi`) honors $CARGO and routes
+      # its internal cargo subcommand through our wrapper, which
+      # invokes /usr/bin/ib_console for build-cache.
+      - name: IB env (Linux IB only)
+        if: matrix.settings.host == 'incredibuild-runner'
+        run: |
+          {
+            echo "CARGO=$(pwd)/scripts/cargo-ib.sh"
+            echo "IB_MAX_LOCAL_CORES=4"
+            echo "IB_PREVENT_OVERLOAD=1"
+          } >> "$GITHUB_ENV"
+
+      - name: IB pre-flight (Linux IB only)
+        if: matrix.settings.host == 'incredibuild-runner'
+        run: ./scripts/ib-prep.sh
 
       # don't use .venv python in CI
       - run: rm .cargo/config.toml
@@ -942,6 +959,10 @@ jobs:
             crates/monty-js/wasi-worker.mjs
             crates/monty-js/wasi-worker-browser.mjs
           if-no-files-found: error
+
+      - name: IB cache stats (Linux IB only)
+        if: always() && matrix.settings.host == 'incredibuild-runner'
+        run: ./scripts/ib-stats.sh
     env:
       MACOSX_DEPLOYMENT_TARGET: '10.13'
       CARGO_INCREMENTAL: '1'
