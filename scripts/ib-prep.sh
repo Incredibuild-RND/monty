@@ -89,13 +89,20 @@ ls -la scripts/ib-profile.xml 2>/dev/null || true
 #
 # The vnext-processing-engine cargo shim reads IB_CONSOLE_ARGS and uses it
 # instead of its built-in default args. Until Phase 6 moves ib-profile.xml
-# into hosted-grid settings, this is how monty keeps the rustc cache profile
-# and per-job cache logfile while deleting the repo-local cargo wrapper.
+# into hosted-grid settings, this is how monty keeps the rustc cache profile,
+# per-job cache logfile, and runner-cap mitigation flags while deleting the
+# repo-local cargo wrapper.
 if [ -n "${GITHUB_ENV:-}" ]; then
     job_id="${GITHUB_JOB:-local}_${GITHUB_RUN_ID:-0}_${GITHUB_RUN_ATTEMPT:-1}"
     log_path="/etc/incredibuild/log/ib_cache_${job_id}.log"
     profile_path="$PWD/scripts/ib-profile.xml"
     ib_console_args="--standalone --build-cache-local-shared --build-cache-force --build-cache-basedir=$PWD --build-cache-local-logfile=$log_path --build-cache-report-all-miss --no-monitor"
+    if [ -n "${IB_MAX_LOCAL_CORES:-}" ]; then
+        ib_console_args="$ib_console_args --max-local-cores=$IB_MAX_LOCAL_CORES"
+    fi
+    if [ -n "${IB_PREVENT_OVERLOAD:-}" ]; then
+        ib_console_args="$ib_console_args --prevent-initiator-overload"
+    fi
     if [ -z "${IB_NO_CACHE:-}" ]; then
         ib_console_args="$ib_console_args --profile=$profile_path"
     fi
