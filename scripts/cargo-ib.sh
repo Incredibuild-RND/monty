@@ -38,9 +38,26 @@
 # mode, verified against the option table in
 #   ib_linux:cpp/XgConsole/XgConsole_main.cpp (lines 84-152, 270-650).
 #
-#   --standalone                  do not try to join an IB coordinator.
-#                                 monty CI has no helpers configured;
-#                                 this prevents a 30s connect timeout.
+#   --standalone                  tolerate a missing/unreachable
+#                                 IB coordinator. The local ib_server
+#                                 unix-socket handshake still happens
+#                                 either way (XgConsole_Session.cpp
+#                                 :224-237). What --standalone flips
+#                                 is the post-handshake check at
+#                                 line 392 (Session::openSession's
+#                                 "Cannot access coordinator. Please
+#                                 start incredibuild_coordinator
+#                                 service." gate, which is gated on
+#                                 !standalone). Without --standalone,
+#                                 the same invocation hard-fails on
+#                                 a coordinator-less runner.
+#                                 The incredibuild-runner GHA image
+#                                 ships initiator-only (no helpers
+#                                 configured); --standalone makes
+#                                 ib_console run all allow_remote
+#                                 work locally. Run ib-probe.yml to
+#                                 confirm and revisit if helpers
+#                                 become available.
 #   --build-cache-local-shared    use the shared local cache at
 #                                 /etc/incredibuild/cache/build_cache/shared/
 #                                 (path from BuildCache_defines.h).

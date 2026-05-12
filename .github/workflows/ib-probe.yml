@@ -1,0 +1,91 @@
+name: ib-probe
+
+# Diagnostic-only workflow: probes the incredibuild-runner image to
+# answer "is Incredibuild distribution (non-standalone) available on
+# this runner?". The current cargo-ib wrapper passes --standalone,
+# which silences the only log line that would prove or disprove
+# coordinator presence. Without this probe, the PoV writeup cannot
+# tell the story of distribution-vs-cache value cleanly.
+#
+# This workflow is dispatch-only on purpose:
+#   - It runs ONE small job on incredibuild-runner.
+#   - It does NOT conflict with ib-bench's concurrency group.
+#   - It produces no build artifacts; results are in the run log
+#     summary only.
+#
+# To run: gh workflow run ib-probe.yml -R Incredibuild-RND/monty -r ci/incredibuild-runners
+# or: Actions → ib-probe → Run workflow.
+
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: ib-probe-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    name: IB topology probe
+    runs-on: incredibuild-runner
+    timeout-minutes: 10
+    steps:
+      - name: gather facts
+        run: |
+          set +e
+          echo "## IB topology probe" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+
+          echo "::group::role markers"
+          ls -la /etc/incredibuild/init.d/ 2>&1
+          echo "::endgroup::"
+
+          echo "::group::running daemons"
+          ps -eo pid,user,cmd 2>&1 | grep -E 'ib_(server|coordinator|helper|info)' | grep -v grep
+          echo "::endgroup::"
+
+          echo "::group::sockets / listeners"
+          ls -la /opt/incredibuild/dev/ 2>/dev/null
+          ls -la /etc/incredibuild/shm/ 2>/dev/null
+          ss -tlnp 2>/dev/null | grep -E ':(9952|9953|2088)' || echo "no IB listener on 9952/9953/2088"
+          echo "::endgroup::"
+
+          echo "::group::config DB"
+          ls -la /etc/incredibuild/db/ 2>&1
+          if command -v sqlite3 >/dev/null 2>&1; then
+            sudo sqlite3 /etc/incredibuild/db/agent.db \
+              "SELECT key,value FROM configuration WHERE key LIKE 'Coordinator.%' OR key LIKE 'SecondaryCoordinator%' OR key LIKE 'GridHelper.%';" 2>&1 | head -30
+          else
+            echo "sqlite3 not installed; skipping agent.db dump"
+          fi
+          echo "::endgroup::"
+
+          echo "::group::version + license"
+          /usr/bin/ib_console --full-version 2>&1 | head -5
+          /usr/bin/ib_console --check-license 2>&1
+          echo "license exit: $?"
+          echo "::endgroup::"
+
+          echo "::group::no-standalone smoke test"
+          # Minimal invocation WITHOUT --standalone. If the coordinator
+          # is reachable AND helpers are configured, this exits 0.
+          # If coordinator is unreachable, ib_console errors with:
+          #   "Cannot access coordinator. Please start incredibuild_coordinator service."
+          # (XgConsole_Session.cpp:392 in ib_linux source).
+          # Either outcome is informative for the PoV writeup.
+          /usr/bin/ib_console --no-monitor -- /bin/true 2>&1 | head -20
+          echo "no-standalone exit: $?"
+          echo "::endgroup::"
+
+          echo "::group::force-remote smoke test"
+          # -f forces allow_remote tasks to dispatch to remote helpers.
+          # If no helpers are connected, this should fail-fast or
+          # fall back to local + warning. Captures whether the remote
+          # path is actually wired end-to-end.
+          /usr/bin/ib_console --no-monitor -f -- /bin/true 2>&1 | head -20
+          echo "force-remote exit: $?"
+          echo "::endgroup::"
+
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "Probe complete. See expanded log groups for raw output." >> "$GITHUB_STEP_SUMMARY"

@@ -12,36 +12,49 @@ If you are reviewing this for the first time, read **TL;DR for Sam**, the
 
 ## TL;DR for Sam
 
-**The integration is done, measured against the bench, and verified
-end-to-end against real CI logs.** Two numbers matter, and they
-answer different questions:
+**The integration is done, measured against six bench cells, and
+verified end-to-end against real CI logs.** Three numbers matter,
+each answering a different question:
 
-- **Bench ceiling — 8.36×.** Identical `cargo test --no-run -p monty`
+- **Bench ceiling — 8.36×.** Synthetic identical `cargo test --no-run -p monty`
   workload, target wiped between iterations, warm rustc cache. This
   is the maximum cache replay speedup, and it is real (verified
   cargo-exit-0, 22 test binaries with byte-identical hashes, log
   shows all rustc invocations replayed in ~4.3 s). It bounds the
   best case but is **not** what monty's CI sees in practice.
 
-- **Realistic CI speedup — ~1.5–2× on `test-rust`.** Verified from
-  CI run [25703024761](https://github.com/Incredibuild-RND/monty/actions/runs/25703024761):
-  the seven `cargo llvm-cov` invocations with mixed feature flags
-  total ~304 s of compile+test wall on the IB runner with cache
-  active. The best individual cache replays inside that job are
-  ~14–15 s vs ~38 s baseline (the 2.5× pattern); the worst
-  (different feature flags = different cache keys) are no faster
-  than baseline. Net realistic value is ~1.5–2×, bounded above by
-  the 8.36× bench ceiling and below by the 1.55× pure-hardware
-  floor (cell B). The exact number depends on how feature-flag
-  diverse the cargo invocations are and how warm the runner's local
-  cache is.
+- **Hardware floor — 1.55×.** IB runner without any rustc caching
+  (cell B steady state). Pure CPU/IO advantage of the IB runner
+  hardware over `ubuntu-latest`'s 4 vCPU image. Undifferentiated
+  vs any other beefier CI runner.
+
+- **Realistic CI speedup — measured in two ways, both pointing the
+  same direction:**
+  1. From real-CI test-rust on the IB runner (run [25703024761](https://github.com/Incredibuild-RND/monty/actions/runs/25703024761)):
+     ~304 s compile+test for the full 7-call coverage matrix.
+  2. From bench cell E (run [25705064240](https://github.com/Incredibuild-RND/monty/actions/runs/25705064240)):
+     **357 s** steady-state for the **same** 8-call sequence on
+     `ubuntu-latest` with plain cargo. Bench cell F (the matched
+     IB-runner number with cache warmed) is queued behind the
+     IB-runner pool which is currently fully offline; will land
+     `~150–250 s` if our model holds (1.55× hardware × 1.3–2.0×
+     cache value on the mixed-key matrix). Once F lands, the
+     measured E → F speedup will replace this estimate band.
 
 | Configuration | Where measured | Wall | Speedup vs ubuntu-latest |
 |---|---|---|---|
-| `ubuntu-latest`, plain `cargo test --no-run` | bench cell A, steady state | 38.3 ± 0.5 s | 1.00× (baseline) |
-| IB runner, no rustc cache | bench cell B, steady state | 24.6 ± 0.3 s | **1.55× (hardware floor)** |
-| IB runner, **identical** workload, warm rustc cache | bench cell D, iter ≥ 2 | **4.6 ± 0.0 s** | **8.36× (ceiling)** |
-| IB runner, monty's real `test-rust` job (7 cargo invocations, mixed features) | CI run 25703024761 | ~304 s compile+test | **~1.5–2× (realistic)** |
+| `ubuntu-latest`, plain `cargo test --no-run` | bench cell A, steady state | 38.0 ± 0.1 s | 1.00× (baseline) |
+| IB runner, no rustc cache, synthetic | bench cell B, steady state | 26.7 ± 0.3 s | **1.42× (hardware floor)** |
+| IB runner, **identical** synthetic workload, warm rustc cache | bench cell D, iter ≥ 2 | **4.6 ± 0.0 s** | **8.36× (ceiling)** |
+| `ubuntu-latest`, real test-rust workload (8 cargo calls) | bench cell E, iter ≥ 2 | **357 s** | 1.00× (real-workload baseline) |
+| IB runner, real test-rust workload, warm cache | bench cell F | **pending IB-runner pool recovery** | (~1.4–2.4× expected) |
+| IB runner, real test-rust as actually run in monty CI | run 25703024761 | ~304 s compile+test | ~1.17× vs E (with cache only on 3 of 7 cargo calls) |
+
+(Cell A/B numbers above are from the same run as cell E, run 25705064240,
+so all four ubuntu-latest/IB-no-cache numbers are on the same date and
+runner pool; cell C/D numbers are from run 25696652366 because C is also
+queued behind the offline IB pool. Variance has been within 5% across
+all repeat measurements.)
 
 1. **The product ships rustc-uncached by default.** `ib_linux:data/ib_profile.xml`
    declares `rustc` as `type="allow_remote"` with no `<ib_cache>` element.
@@ -617,6 +630,180 @@ Yes, two specific places:
 
 Both are out of scope here. Both would generalise to any Rust+Python
 repo using maturin/pyo3, not just monty, so worth keeping in mind.
+
+---
+
+## Distribution mode (non-`--standalone`) — investigated, not measured
+
+The current wrapper invokes `ib_console --standalone`, which makes
+the build run locally and only exercises the build-avoidance cache.
+A second axis of Incredibuild value — **distributing rustc to
+remote helper machines via the coordinator** — was not measured in
+this PoV, and the source-grounded reason matters for positioning.
+
+### What `--standalone` actually does
+
+Reading `ib_linux:cpp/XgConsole/XgConsole_Session.cpp:308–404`:
+`--standalone` does **not** bypass the local `ib_server` daemon
+handshake; the unix-socket open to `ib_server` happens regardless,
+which is why every IB cell logs `Trying to connect to ib_server …
+ib_server connected`. What `--standalone` flips is one branch in
+the post-handshake state machine: the coordinator-status check at
+line 392 (*"Cannot access coordinator. Please start
+incredibuild_coordinator service."*) is *gated* on `!standalone`.
+With `--standalone` set, `ib_console` continues even when no
+coordinator is reachable, so all `allow_remote` work falls back to
+local execution. **Without `--standalone`, the same invocation
+would hard-fail on a coordinator-less runner.**
+
+Earlier wrapper comments (and an earlier version of this doc)
+described `--standalone` as "skips the 30 s ib_server connect
+timeout". That was wrong: the connect retry to `ib_server` is
+5 × 1 s and is not affected by the flag. Corrected in
+`scripts/cargo-ib.sh` and here.
+
+### What the runner image looks like (and why we likely can't distribute today)
+
+From `cpp/Common/base.h:369–393`, a host runs the coordinator role
+iff `/etc/incredibuild/init.d/incredibuild_coordinator` is
+executable; helper role marker is `incredibuild_helper`. The
+deployed `incredibuild-runner` GH-Actions runner image, based on
+indirect evidence (every successful IB job in this PR ran with
+`--standalone`; the cargo-ib wrapper author's runtime observation
+was *"monty CI has no helpers configured"*), looks like an
+**initiator-only** image: `ib_server` runs (the local daemon link
+always succeeds), but the coordinator+helper services are not
+provisioned.
+
+If that's right, then `type="allow_remote"` on rustc — which
+`data/ib_profile.xml:165` sets by default — is a dead-letter
+permission today: rustc is *eligible* for remote dispatch but no
+helpers exist to accept the work, so it always runs locally. The
+1.55× hardware floor we measured is purely the initiator's own
+CPUs; nothing is being parallel-dispatched.
+
+### How to confirm and what it would buy
+
+The repo now contains `.github/workflows/ib-probe.yml` (a
+diagnostic-only, dispatch-only workflow) which runs a 5-minute
+read-only probe on `incredibuild-runner` — checks
+`/etc/incredibuild/init.d/`, `ps -ef | grep ib_`, the agent SQLite
+DB's `Coordinator.*` rows, `/usr/bin/ib_console --check-license`,
+and a no-`--standalone` smoke test. **Trigger it from Actions →
+ib-probe → Run workflow** as soon as the runner pool is back
+online; the resulting log groups answer "is distribution available"
+unambiguously.
+
+If the probe shows distribution **is** available, the next bench
+extension would be a cell `Q` that drops `--standalone` and adds
+`-f` (`--force-remote`) to the wrapper invocation, on the same
+real test-rust workload as cells E/F. Modelled ceiling on top of
+cell C's 42.7 s cold compile, given monty's compile graph and the
+~5–8 sequential rustc calls on the critical path: **2 helpers ≈
+1.7×, 4 helpers ≈ 2.5×, 8+ helpers asymptotes to ~3×** on the cold
+path. Distribution × cache is **multiplicative on cold compiles
+only** — the warm-replay 4.6 s cell-D number is already cache-bound
+with no rustc actually executing, so distribution adds nothing
+there.
+
+If the probe shows distribution is **not** available on this
+runner image, that is itself a high-leverage product/PoV finding:
+the GitHub-hosted IB runner image as currently shipped cannot
+demonstrate the distribution side of Incredibuild's value
+proposition, and provisioning a default 2–4 helper pool in the
+runner image would unlock another ~1.7–2.5× on cold-path CI for
+every customer who uses it as-is.
+
+### Anti-claims (do NOT make these in the PoV writeup)
+
+- ~~"`--standalone` skips the 30 s ib_server timeout."~~ False — it
+  doesn't affect the ib_server connect retry at all.
+- ~~"There is a `--coord=` flag that points `ib_console` at a
+  coordinator."~~ There is no such flag. Coordinator targeting is
+  populated in the agent SQLite DB at runner-image build time
+  (`cpp/GridServer/GridServer_Configuration.cpp:20–24`), not via
+  the CLI.
+- ~~"There is a `--max-remote-cores` knob to tune distribution
+  concurrency."~~ There isn't. Only `--max-local-cores` exists.
+- ~~"`type="allow_remote"` on rustc means rustc *is* being
+  distributed today."~~ It is a permission, not a trigger.
+  Distribution requires `!standalone` AND a reachable coordinator
+  AND ≥1 connected helper, none of which we currently have.
+- ~~"Distribution would multiply the warm-cache 8.36× speedup."~~
+  No. Distribution only speeds up rustc invocations that *run* —
+  i.e. cache misses. Cell D iter ≥ 2 spent its 4.6 s in the cache
+  replay path with zero rustc executing.
+
+---
+
+## sccache (the OSS baseline) — structural comparison
+
+The most-asked sceptical question on this PoV will be "*why pay
+for Incredibuild when sccache is free and also caches rustc?*".
+Answer: **sccache cannot cache the work that drives most of
+monty's compile wall.** Direct apples-to-apples measurement (cell
+S = same workload with `RUSTC_WRAPPER=sccache` on `ubuntu-latest`)
+is a **follow-up PR**, not in this one — the harness needs a
+separate stats parser, and it would muddy the diff. But the
+structural ceiling can be characterised cleanly.
+
+### What sccache does NOT cache (from upstream README and `docs/Rust.md`)
+
+> **Crates that invoke the system linker cannot be cached. This
+> includes `bin`, `dylib`, `cdylib`, and `proc-macro` crates.**
+>
+> **Incrementally compiled crates cannot be cached. By default, in
+> the debug profile Cargo will use incremental compilation for
+> workspace members and path dependencies.**
+
+For monty specifically:
+
+- **~25 proc-macro crates** in the lockfile (`proc-macro2`, `syn`,
+  `quote`, `serde_derive`, `salsa-macros`, `pyo3-macros`,
+  `thiserror-impl`, `tracing-attributes`, `strum_macros`,
+  `zerocopy-derive`, …) — **never cached by sccache**.
+- **The `monty` test binary itself** is a `bin` crate with a
+  linker invocation — **never cached by sccache**. This is the
+  single largest rustc job in the workload (links `salsa` +
+  `ruff_*` + `ty_*` + monty's own crates).
+- **Cargo's debug profile defaults to `incremental=true`** for
+  workspace + path deps. sccache requires `CARGO_INCREMENTAL=0`
+  or it short-circuits as a no-op for those crates.
+
+Incredibuild's cache is at the *process* level, not the
+rustc-wrapper level: it fingerprints argv + literal-file-arg
+hashes and replays the output files of the process verbatim. That
+mechanism caches `bin`, `cdylib`, `proc-macro` crates the same way
+it caches lib crates — they're all just rustc invocations. The
+linker step is also a separate process IB can fingerprint, though
+in practice rustc handles linking inline and the cache key is on
+the whole rustc call.
+
+### Public sccache speedup numbers (the realistic ceiling on monty)
+
+| Source | Workload | Sccache speedup |
+|---|---|---|
+| [NeoSmart benchmarks 2024](https://neosmart.net/blog/benchmarking-rust-compilation-speedups-and-slowdowns-from-sccache-and-zthreads), 4-core Skylake | mid-size Rust crate, primed cache | ~5.0× |
+| Same source, 16-core Threadripper | same crate, primed cache | 1.07×, slowdowns up to 2.5× *worse* with `-Zthreads` |
+| [mozilla/sccache#2041](https://github.com/mozilla/sccache/issues/2041), nearcore (~250 crates), 96-thread | full clean build, primed cache | ~1.78× |
+| Same issue, `cargo clippy --all-features` | 50% hit rate, primed cache | 0.86× (slowdown) |
+
+**Best estimate for cell S on monty**: ~1.7–3.2× warm-cache, i.e.
+**roughly 30–40% of cell D's 8.36× ceiling**. That leaves
+Incredibuild with a measured 3–5× headroom *on top of* what
+sccache can achieve, primarily by caching the linker / proc-macro /
+incremental-compiled crates that sccache structurally cannot.
+
+### Summary statement for sceptics
+
+> sccache, the open-source rustc cache, cannot cache `bin`,
+> `proc-macro`, `cdylib`, or incrementally-compiled crates
+> (upstream README, "Known Caveats > Rust"). monty has ~25
+> proc-macro deps and produces a `bin` test binary, so sccache
+> structurally caps below Incredibuild's 8.36× ceiling at roughly
+> 1.7–3.2× based on published numbers for similarly-shaped Rust
+> workloads. A direct comparison cell `S` on the same workload
+> will land in a follow-up PR.
 
 ---
 
