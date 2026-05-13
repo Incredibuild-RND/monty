@@ -18,6 +18,7 @@ beneficiary and a known risk.
 | Action | Who | Effort | Effect on monty | Effect on every other IB customer |
 |---|---|---|---|---|
 | Ship `cargo` SHIM on the runner image (Layer A) | IB build-acceleration team | **Done** — vnext PR #210 merged and Tal deployed the image | Standard cargo subcommands are out-of-the-box; `scripts/cargo-ib.sh` remains only as a small bridge for extension/toolchain forms until vnext covers them | Every Rust workload on the JIT runner gets free `ib_console` build cache for normal cargo build/test/bench/check/clippy/run/install/rustc flows |
+| Ship cargo extension/toolchain coverage (Layer A2) | IB build-acceleration team | **PR open and green** — [vnext PR #215](https://github.com/Incredibuild-RND/vnext-processing-engine/pull/215) | Once merged and deployed, `scripts/cargo-ib.sh` can be deleted and monty can use bare `cargo llvm-cov`, `cargo codspeed build`, and `cargo +nightly miri test` | Makes Rust CI extension workloads out-of-the-box instead of requiring repo-local bridge wrappers |
 | Run `manylinux-probe` job in `ib-probe.yml` (Layer B) | us | **Done** — probe and cell H are green; first production Linux PGO wheel job is now wired through a GHA-level manylinux container on `incredibuild-runner` | Validates the path toward 8 more IB-cacheable wheel jobs | Every Python-wheel-building customer of IB unlocked simultaneously |
 | Upload `scripts/ib-profile.xml` to your tenant's hosted-grid IB settings (Layer C) | Sam + IB ops | 5 min via the IB grid UI | `scripts/ib-profile.xml` and the `IB_PROFILE` env wiring delete from monty; profile becomes centrally-tunable without re-merging | Sets the precedent that profile config lives at the tenant level, not per-repo |
 | Bump `NAMESPACE_INSTANCE_DURATION_MINUTES` from ~12 to 30 on the Rust pool (Layer E) | IB ops | one Prefect/grid config edit | `lint` and `fuzz` jobs (currently forced to `ubuntu-latest` by the cap) move to IB; recovers a long-tail of CI time | Every Rust customer with > 12-min jobs |
@@ -75,8 +76,11 @@ the green light to merge.
 - Standard cargo calls now rely on the runner image's generated cargo
   shim through `$PATH`.
 - `scripts/cargo-ib.sh` was reintroduced as a narrow bridge for cargo
-  extension/toolchain forms the upstream shim does not classify yet:
-  `cargo llvm-cov`, `cargo codspeed`, and `cargo +nightly miri`.
+  extension/toolchain forms that PR #210 does not classify:
+  `cargo llvm-cov`, `cargo codspeed build`, and `cargo +nightly miri test`.
+  [vnext PR #215](https://github.com/Incredibuild-RND/vnext-processing-engine/pull/215)
+  now adds those forms upstream and is green; after it is merged and the
+  runner image is deployed, this bridge can be removed.
 - Deleted the broad `CARGO=./scripts/cargo-ib.sh` env wiring from
   `test-python-coverage` and `build-js`; maturin and napi-rs now use the
   image-side shim when they call normal cargo subcommands.
@@ -264,8 +268,9 @@ Layer A has merged and deployed. The broad
 `CARGO=$(pwd)/scripts/cargo-ib.sh` lines are gone; the runner image's
 auto-generated `cargo` shim takes over via `$PATH` for normal cargo
 subcommands. The remaining local bridge is deliberately scoped to cargo
-extensions and toolchain-prefixed commands that are not out-of-the-box
-yet.
+extensions and toolchain-prefixed commands. [vnext PR #215](https://github.com/Incredibuild-RND/vnext-processing-engine/pull/215)
+is the upstream fix for that bridge; after merge/deploy, the clean
+customer PR can use bare `cargo` for those calls too.
 
 ### New roadmap item discovered: IB runner needs `setarch personality`
 
@@ -313,12 +318,15 @@ plan) rather than an IB-product item.
 2. **Layer A is done.** [vnext PR #210](https://github.com/Incredibuild-RND/vnext-processing-engine/pull/210)
    merged, Tal deployed the image, and monty's probe found the live
    cargo shim.
-3. **Schedule a 30-min sync with IB ops** for Layer C (profile
+3. **Merge/deploy Layer A2.** [vnext PR #215](https://github.com/Incredibuild-RND/vnext-processing-engine/pull/215)
+   is open and green; it removes the need for monty's local
+   `scripts/cargo-ib.sh` bridge after the runner image is rebuilt.
+4. **Schedule a 30-min sync with IB ops** for Layer C (profile
    upload) + Layer E (cap bump). Both are config-only; one meeting.
    Suggested attendees: Sam (monty), me, an IB ops engineer with
    write access to the hosted-grid tenant config and `Settings`
    pool config.
-4. **~~Triage Layer B's probe outcome.~~** ✅ Done — Layer B is GREEN
+5. **~~Triage Layer B's probe outcome.~~** ✅ Done — Layer B is GREEN
    ([run 25726192172](https://github.com/Incredibuild-RND/monty/actions/runs/25726192172)).
    Phase 8 of the closure plan (wire one manylinux build matrix entry
    to `incredibuild-runner` + `container:`) is unblocked and Cell H

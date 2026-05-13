@@ -12,16 +12,15 @@ or when a JIT runner image rebuild lands, the right person can open
 the cleanup PR in 10 minutes by following the diff below — they don't
 need to re-derive the change set.
 
-**Current correction (2026-05-12)**: Phase 5 below is partly
-superseded. vnext PR #210 has shipped and the runner image now handles
-standard cargo subcommands out-of-the-box, but it does **not** yet
-classify cargo extension/toolchain forms such as `cargo llvm-cov`,
-`cargo codspeed`, or `cargo +nightly miri`. Do not delete
-`scripts/cargo-ib.sh` until vnext adds first-class coverage for those
-forms and monty's `test-rust`, `miri`, and codspeed-build bench cells
-are green without the bridge. The broad `CARGO=...cargo-ib.sh` env
-wiring can stay removed; the bridge should remain only at explicit
-extension/toolchain call sites.
+**Current correction (2026-05-13)**: vnext PR #210 has shipped and the
+runner image now handles standard cargo subcommands out-of-the-box.
+[vnext PR #215](https://github.com/Incredibuild-RND/vnext-processing-engine/pull/215)
+is open and green with first-class coverage for the remaining
+extension/toolchain forms (`cargo llvm-cov`, `cargo codspeed build`,
+and `cargo +nightly miri test`). Do not delete `scripts/cargo-ib.sh`
+until PR #215 is merged, the runner image is rebuilt/deployed, and
+monty's `test-rust`, `miri`, and codspeed-build bench cells are green
+without the bridge.
 
 ---
 
@@ -30,13 +29,16 @@ extension/toolchain call sites.
 ### Gate
 1. [`Vnext PR #210`](https://github.com/Incredibuild-RND/vnext-processing-engine/pull/210)
    merged to `Incredibuild-RND/vnext-processing-engine:main`.
-2. The IB build team rebuilds the JIT-runner image so it carries the
+2. [`Vnext PR #215`](https://github.com/Incredibuild-RND/vnext-processing-engine/pull/215)
+   merged to `Incredibuild-RND/vnext-processing-engine:main`.
+3. The IB build team rebuilds the JIT-runner image so it carries the
    regenerated shim at `/ib-workspace/incredibuild/ib-accel/bin/cargo`
    (or `/opt/ib-accel/bin/cargo` on older variants).
-3. The next dispatch of `ib-probe.yml` on `ci/incredibuild-runners`
+4. The next dispatch of `ib-probe.yml` on `ci/incredibuild-runners`
    reports `FOUND Layer-A cargo shim:` in its `Layer-A cargo SHIM
-   deploy check (Phase 4)` log group.
-4. Cell G in `ib-bench.yml` (the `cargo` shim simulation) is within
+   deploy check (Phase 4)` log group and the generated shim includes
+   `llvm-cov`, `codspeed`, and `miri` cases.
+5. Cell G in `ib-bench.yml` (the `cargo` shim simulation) is within
    ~10% of cell F's wall time — confirms the auto-generated shim
    matches the hand-rolled `scripts/cargo-ib.sh` behavior.
 
@@ -225,8 +227,8 @@ Verify the surrounding `if` branch — once both branches collapse to
 ```
 chore(ib): retire scripts/cargo-ib.sh — runner image now ships cargo SHIM
 
-vnext-processing-engine#210 (cargo SHIM upstream) merged and the JIT
-runner image was rebuilt on <date>. The auto-generated
+vnext-processing-engine#210 and #215 (cargo SHIM upstream) merged and
+the JIT runner image was rebuilt on <date>. The auto-generated
 /ib-workspace/incredibuild/ib-accel/bin/cargo wraps cargo subcommands
 with /usr/bin/ib_console transparently via $PATH, replacing monty's
 hand-rolled wrapper.
