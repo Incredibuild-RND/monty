@@ -381,7 +381,8 @@ jobs:
       # iteration) so we throttle local rustc concurrency in line with
       # ci.yml::test-rust's mitigation for the runner wall-clock cap.
       # IB cache hits are I/O-bound so capping cores costs little.
-      IB_MAX_LOCAL_CORES: '8'
+      IB_MAX_LOCAL_CORES: '4'
+      IB_PREVENT_OVERLOAD: '1'
       LANG: C.UTF-8
       LC_ALL: C.UTF-8
       PYTHONUTF8: '1'
@@ -444,7 +445,8 @@ jobs:
     env:
       CARGO_HOME: ${{ github.workspace }}/.cargo
       CARGO_TARGET_DIR: ${{ github.workspace }}/target
-      IB_MAX_LOCAL_CORES: '8'
+      IB_MAX_LOCAL_CORES: '4'
+      IB_PREVENT_OVERLOAD: '1'
       LANG: C.UTF-8
       LC_ALL: C.UTF-8
       PYTHONUTF8: '1'
@@ -546,6 +548,7 @@ jobs:
       CARGO_HOME: ${{ github.workspace }}/.cargo
       CARGO_TARGET_DIR: ${{ github.workspace }}/target
       IB_MAX_LOCAL_CORES: '8'
+      IB_PREVENT_OVERLOAD: '1'
       LANG: C.UTF-8
       LC_ALL: C.UTF-8
       PYTHONUTF8: '1'
