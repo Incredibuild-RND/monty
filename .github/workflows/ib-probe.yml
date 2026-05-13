@@ -39,6 +39,48 @@ jobs:
     runs-on: incredibuild-runner
     timeout-minutes: 10
     steps:
+      - name: dirty inject candidate Monty profile
+        run: |
+          set -euxo pipefail
+          profile_b64='PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiID8+CjxpYl9wcm9maWxlIHZlcnNpb249IjEiPgogICAgPGdsb2JhbHMgaWdub3JlX2ZvbGxvd2luZ19wcm9maWxlcz0iZmFsc2UiIC8+CiAgICA8cHJvY2Vzc2VzPgogICAgICAgIDxwcm9jZXNzIGZpbGVuYW1lPSJjYXJnbyIKICAgICAgICAgICAgICAgICB0eXBlPSJpbnRlcmNlcHRlZCIgLz4KCiAgICAgICAgPHByb2Nlc3MgZmlsZW5hbWU9InJ1c3RjIgogICAgICAgICAgICAgICAgIHR5cGU9ImFsbG93X3JlbW90ZSIKICAgICAgICAgICAgICAgICBleGNsdWRlX2FyZ3M9Ii0tdmVyc2lvbjotdlY6YnVpbGRfc2NyaXB0X2J1aWxkOmJ1aWxkX3NjcmlwdF9tYWluIj4KICAgICAgICAgICAgPGliX2NhY2hlIGVuYWJsZWQ9InRydWUiIC8+CiAgICAgICAgPC9wcm9jZXNzPgogICAgPC9wcm9jZXNzZXM+CjwvaWJfcHJvZmlsZT4K'
+          for profile_path in \
+              /ib-workspace/cache/ib_profile.xml \
+              /ib-workspace/incredibuild/ib_profile.xml \
+              /etc/default/ib_profile.xml; do
+              sudo mkdir -p "$(dirname "$profile_path")"
+              echo "$profile_b64" | base64 -d | sudo tee "$profile_path" >/dev/null
+              sudo chmod 0644 "$profile_path"
+              echo "wrote $profile_path"
+              grep -n 'filename="cargo"\|filename="rustc"\|ib_cache enabled="true"' "$profile_path"
+          done
+
+      - name: dirty cargo/rustc profile smoke
+        run: |
+          set -euxo pipefail
+          workdir="$(mktemp -d)"
+          cd "$workdir"
+          mkdir -p src
+          cat > Cargo.toml <<'EOF'
+          [package]
+          name = "ib-profile-smoke"
+          version = "0.1.0"
+          edition = "2021"
+          EOF
+          cat > src/main.rs <<'EOF'
+          fn main() {
+              println!("ib profile smoke");
+          }
+          EOF
+          export IB_ACCEL_DEBUG=1
+          export IB_CONSOLE_ARGS="--standalone --build-cache-local-shared --build-cache-force --build-cache-basedir=$PWD --build-cache-local-logfile=/tmp/ib-profile-smoke.log --build-cache-report-all-miss --no-monitor"
+          cargo build -vv 2>&1 | tee /tmp/ib-profile-smoke.cargo.log
+          echo "---- cargo shim final lines ----"
+          grep -n '\[ib-accel\] Final\|IB_CONSOLE_ARGS override' /tmp/ib-profile-smoke.cargo.log || true
+          echo "---- build cache log ----"
+          grep -n 'rustc\|cache\|hit\|miss\|profile' /tmp/ib-profile-smoke.log 2>/dev/null | head -80 || true
+          echo "---- cache dir ----"
+          sudo find /etc/incredibuild/cache/build_cache/shared -maxdepth 3 -type f 2>/dev/null | head -20 || true
+
       - name: gather facts
         run: |
           set +e
