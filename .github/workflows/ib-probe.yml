@@ -2,10 +2,9 @@ name: ib-probe
 
 # Diagnostic-only workflow: probes the incredibuild-runner image to
 # answer "is Incredibuild distribution (non-standalone) available on
-# this runner?". The current cargo-ib wrapper passes --standalone,
-# which silences the only log line that would prove or disprove
-# coordinator presence. Without this probe, the PoV writeup cannot
-# tell the story of distribution-vs-cache value cleanly.
+# this runner?" and "which runner-image cargo shim is live?". Without
+# this probe, the PoV writeup cannot tell the story of
+# distribution-vs-cache value cleanly.
 #
 # This workflow is dispatch-only on purpose:
 #   - It runs ONE small job on incredibuild-runner.
@@ -101,8 +100,8 @@ jobs:
           # the runner image is rebuilt, an auto-generated cargo shim
           # will appear at /ib-workspace/incredibuild/ib-accel/bin/cargo
           # (or /opt/ib-accel/bin/cargo on older image variants). When
-          # this shows up, monty's scripts/cargo-ib.sh becomes redundant
-          # — the cleanup PR for Phase 5 of the closure plan can land.
+          # this shows up with the vnext #215 extension cases, monty's
+          # local cargo bridge can be deleted.
           # The next ib-probe run after the rebuild will surface this
           # automatically without anyone having to remember to check.
           for candidate in \
@@ -113,8 +112,10 @@ jobs:
                   ls -la "$candidate"
                   echo "----- shim content (head) -----"
                   head -30 "$candidate" 2>/dev/null
+                  echo "----- shim extension cases -----"
+                  grep -n '"llvm-cov"\|"codspeed"\|"miri"\|next_idx' "$candidate" 2>/dev/null || true
                   echo "----- /shim content -----"
-                  echo "Layer-A is DEPLOYED on this runner image. Phase 5 (cleanup of scripts/cargo-ib.sh) is unblocked." >> "$GITHUB_STEP_SUMMARY"
+                  echo "Layer-A/A2 cargo shim is DEPLOYED on this runner image. Phase 5 cleanup is unblocked." >> "$GITHUB_STEP_SUMMARY"
                   break
               fi
           done

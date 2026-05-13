@@ -144,16 +144,16 @@ jobs:
       - run: cargo llvm-cov clean --workspace
 
       # coverage for `make test-no-features`
-      - run: ./scripts/cargo-ib.sh llvm-cov --no-report -p monty
-      - run: ./scripts/cargo-ib.sh llvm-cov run --no-report -p monty-datatest
+      - run: cargo llvm-cov --no-report -p monty
+      - run: cargo llvm-cov run --no-report -p monty-datatest
       # coverage for `make test-memory-model-checks`
-      - run: ./scripts/cargo-ib.sh llvm-cov --no-report -p monty --features memory-model-checks
-      - run: ./scripts/cargo-ib.sh llvm-cov run --no-report -p monty-datatest --features memory-model-checks
+      - run: cargo llvm-cov --no-report -p monty --features memory-model-checks
+      - run: cargo llvm-cov run --no-report -p monty-datatest --features memory-model-checks
       # coverage for `make test-ref-count-return`
-      - run: ./scripts/cargo-ib.sh llvm-cov --no-report -p monty --features ref-count-return
-      - run: ./scripts/cargo-ib.sh llvm-cov run --no-report -p monty-datatest --features ref-count-return
+      - run: cargo llvm-cov --no-report -p monty --features ref-count-return
+      - run: cargo llvm-cov run --no-report -p monty-datatest --features ref-count-return
       # coverage for `make test-type-checking`
-      - run: ./scripts/cargo-ib.sh llvm-cov --no-report -p monty_type_checking -p monty_typeshed
+      - run: cargo llvm-cov --no-report -p monty_type_checking -p monty_typeshed
       # Generating text report:
       - run: cargo llvm-cov report --ignore-filename-regex "$LLVM_COV_IGNORE_FILENAME_REGEX"
       # Generate codecov report (use `report` subcommand to avoid recompilation)
@@ -458,7 +458,7 @@ jobs:
       - run: rm .cargo/config.toml
 
       - name: Run miri tests
-        run: ./scripts/cargo-ib.sh +nightly miri test -p monty --lib
+        run: cargo +nightly miri test -p monty --lib
 
       - name: IB cache stats
         if: always()

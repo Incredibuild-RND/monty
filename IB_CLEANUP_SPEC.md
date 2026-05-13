@@ -12,15 +12,12 @@ or when a JIT runner image rebuild lands, the right person can open
 the cleanup PR in 10 minutes by following the diff below — they don't
 need to re-derive the change set.
 
-**Current correction (2026-05-13)**: vnext PR #210 has shipped and the
-runner image now handles standard cargo subcommands out-of-the-box.
+**Current correction (2026-05-13)**: vnext PR #210 and
 [vnext PR #215](https://github.com/Incredibuild-RND/vnext-processing-engine/pull/215)
-is open and green with first-class coverage for the remaining
-extension/toolchain forms (`cargo llvm-cov`, `cargo codspeed build`,
-and `cargo +nightly miri test`). Do not delete `scripts/cargo-ib.sh`
-until PR #215 is merged, the runner image is rebuilt/deployed, and
-monty's `test-rust`, `miri`, and codspeed-build bench cells are green
-without the bridge.
+have shipped. The runner image now handles standard cargo subcommands
+and monty's extension/toolchain forms (`cargo llvm-cov`,
+`cargo codspeed build`, and `cargo +nightly miri test`) out-of-the-box.
+`scripts/cargo-ib.sh` is deleted in the evidence branch cleanup.
 
 ---
 
@@ -42,7 +39,7 @@ without the bridge.
    ~10% of cell F's wall time — confirms the auto-generated shim
    matches the hand-rolled `scripts/cargo-ib.sh` behavior.
 
-When all four are true: open the PR below.
+All gates are now true. This section is the applied cleanup.
 
 ### Files to delete
 
@@ -146,7 +143,7 @@ does not touch it. Phase 9 (codspeed recovery) is what re-engages it.
 
 #### `.github/workflows/ib-bench.yml`
 
-Cells F and I currently dispatch via `./scripts/cargo-ib.sh`. Replace
+Cells F and I previously dispatched via `./scripts/cargo-ib.sh`. Replace
 both with bare `cargo`:
 
 ```yaml
@@ -195,7 +192,9 @@ Path filter at the top of the workflow:
 
 #### `scripts/ib-bench-run.sh`
 
-Remove the auto-fallback to `./scripts/cargo-ib.sh` on IB hosts:
+`scripts/ib-bench-run.sh` already defaults to PATH-resolved `cargo`.
+If an older branch still has the auto-fallback to `./scripts/cargo-ib.sh`
+on IB hosts, remove it:
 
 ```bash
 # BEFORE (around line 54):

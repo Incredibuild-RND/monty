@@ -84,7 +84,6 @@ on:
       - .github/workflows/ib-bench.yml
       - scripts/ib-bench-run.sh
       - scripts/ib-bench-summarize.py
-      - scripts/cargo-ib.sh
       - scripts/ib-profile.xml
 
 permissions: {}
@@ -415,7 +414,7 @@ jobs:
           CELL: F
           ITERATIONS: ${{ inputs.iterations || '1' }}
           WORKLOAD: test-rust
-          CARGO_BIN: ./scripts/cargo-ib.sh
+          CARGO_BIN: cargo
           # IB pre-flight already exports IB_PROFILE via $GITHUB_ENV; we
           # set it explicitly here to make the cell self-describing and
           # robust against future ib-prep.sh changes.
@@ -582,7 +581,7 @@ jobs:
           CELL: I
           ITERATIONS: ${{ inputs.iterations || '1' }}
           WORKLOAD: codspeed
-          CARGO_BIN: ./scripts/cargo-ib.sh
+          CARGO_BIN: cargo
           IB_PROFILE: ${{ github.workspace }}/scripts/ib-profile.xml
         run: ./scripts/ib-bench-run.sh
 

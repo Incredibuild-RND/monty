@@ -15,10 +15,10 @@ If you are reviewing this for the first time, read **TL;DR for Sam**, the
 **Current closure correction (2026-05-12)**: vnext PR #210 has shipped,
 so normal cargo subcommands (`build`, `test`, `bench`, `check`,
 `clippy`, `run`, `install`, `rustc`) are now wrapped out-of-the-box by
-the IB runner image. Monty still keeps `scripts/cargo-ib.sh` as a narrow
-bridge for cargo extension/toolchain forms (`llvm-cov`, `codspeed`,
-`+nightly miri`) until vnext classifies those forms directly. The
-benchmark numbers below remain valid; this note only updates the
+the IB runner image. vnext PR #215 then added the remaining cargo
+extension/toolchain forms used by monty (`llvm-cov`, `codspeed build`,
+`+nightly miri test`). Monty no longer needs `scripts/cargo-ib.sh`.
+The benchmark numbers below remain valid; this note only updates the
 implementation boundary.
 
 **The integration is done, measured across six bench cells, all on
@@ -122,8 +122,7 @@ F iter ≥ 2) are cache-bound and would not change.
 
 4. **The `ib_console` flag set is minimal and verified.** The same
    flag set is now used by the runner-image cargo shim for standard
-   cargo subcommands and by `scripts/cargo-ib.sh` for the remaining
-   extension/toolchain bridge. Every flag was cross-referenced against
+   cargo subcommands and cargo extension/toolchain forms. Every flag was cross-referenced against
    the option table in `ib_linux:cpp/XgConsole/XgConsole_main.cpp`
    (lines 84-152, 270-650). Nothing speculative.
 
@@ -161,9 +160,8 @@ F iter ≥ 2) are cache-bound and would not change.
   invocations and non-deterministic build scripts don't pollute or
   wrongly hit the cache). Inherits `gcc`/`clang`/`cc1`/`cc1plus`
   rules from the default profile by NOT redeclaring them.
-- `scripts/cargo-ib.sh` — originally the minimal `ib_console` wrapper
-  for all cargo work; after vnext PR #210 it is intentionally narrowed
-  to extension/toolchain forms the runner image does not yet classify.
+- `scripts/cargo-ib.sh` — deleted after vnext PR #215 shipped first-class
+  coverage for the remaining extension/toolchain forms.
   Every flag is cross-referenced against `XgConsole_main.cpp`.
 - `scripts/ib-prep.sh` — exports `IB_CACHE_LOG` (absolute path under
   `/etc/incredibuild/log/`, required by the `ib_console` option
@@ -598,7 +596,7 @@ Bench infrastructure is at:
 - `scripts/ib-bench-run.sh`
 - `scripts/ib-bench-summarize.py`
 - `scripts/ib-profile.xml` (the one-knob profile)
-- `scripts/cargo-ib.sh` (the wrapper)
+- `scripts/cargo-ib.sh` (historical wrapper, now deleted)
 
 ---
 
@@ -638,12 +636,12 @@ argv and `.rsp` files); it is the wrong shape for an interpreter.
 |---|---|---|
 | `uv sync --all-packages --only-dev` | **No** | PyPI download + dependency resolution + wheel install. uv's own cache is the right cache here. ib_console can't fingerprint network I/O. |
 | `uv run maturin develop --uv -m crates/monty-python/Cargo.toml` (top-level) | **No** | `maturin` is a Python binary that orchestrates a cargo subprocess and copies the resulting `.so` into the venv. The orchestration itself is fast and side-effecty. |
-| ↳ cargo subprocess that maturin shells out to | **Yes — already wired** | Heavy `rustc` work. Current closure state relies on the runner-image cargo shim for normal compile-driving cargo subcommands; the local bridge is only for extension/toolchain forms. |
+| ↳ cargo subprocess that maturin shells out to | **Yes — already wired** | Heavy `rustc` work. Current closure state relies on the runner-image cargo shim for compile-driving cargo subcommands. |
 | `uv run --package pydantic-monty --only-dev pytest crates/monty-python/tests` | **No** | Test execution. Loads dynamically-imported `.py` files, conftest fixtures, plugins, runtime fs and socket activity. Not a deterministic input→output build artifact. Even if it were, ib_console can't see the import graph as part of the key. |
 | `make pytest` (in `test-python` matrix) | **No** | Same as above. The matrix runs on `ubuntu-latest` anyway. |
 | `make dev-py` / `make dev-py-release` | **No** at top level (calls maturin), **Yes** transitively for the inner cargo on IB jobs. | Same logic: route the cargo subprocess, not the maturin driver. |
 | `prek` / `ruff` / `ruff format` / `basedpyright` / `mypy` / `codespell` / `yamlfmt` / `zizmor` | **No** | Lint hooks. Ruff is a sub-second Rust binary; mypy/basedpyright have their own (much better) incremental caches; the ib_console daemon-startup cost would dwarf the work. The `lint` job stays on `ubuntu-latest` for this reason (and to dodge the IB runner's wall-clock cap, which kills basedpyright + workspace clippy mid-run). |
-| `cargo-llvm-cov` (subcommands `clean`, `--no-report`, `report`, `report --codecov`) | **Yes** | Route compile-driving extension calls through the bridge until vnext handles cargo extensions directly. The `show-env` subcommand is the one exception — it just prints env discovery output that we `eval`, and ib_console's "ib_server connected" stdout chatter would corrupt the eval. Use plain `cargo` for `show-env` only. |
+| `cargo-llvm-cov` (subcommands `clean`, `--no-report`, `report`, `report --codecov`) | **Yes for compile-driving forms** | The runner-image cargo shim wraps compile-driving `llvm-cov` calls directly. Metadata/report/clean forms stay unwrapped by design. The `show-env` subcommand just prints env discovery output that we `eval`, and ib_console's "ib_server connected" stdout chatter would corrupt the eval. Use plain `cargo` for `show-env` only. |
 | `cargo bench`, `cargo +nightly miri test`, `cargo fuzz run`, `cargo install` | **Yes** | All real cargo invocations. Compilation in each case is rustc work; rustc cache pays off on rebuild. Test/bench/miri/fuzz **execution** is not cached (and shouldn't be — fuzzing is nondeterministic by design, miri-run is intentionally slow interpretation). |
 | Wheel/sdist build via `PyO3/maturin-action` | **No** | These jobs run on `ubuntu-latest` (not on the IB runner) and use cross-compilation containers. Not in scope for the IB integration. |
 
@@ -996,7 +994,8 @@ extended speedup table automatically.
 | Pre-PR (no IB integration) | 0 of 32 (0%) |
 | Today (this PR's `ci.yml::test-rust` + `test-python-coverage` + `bench-test` + `miri`) | 4 of 32 (12.5%) |
 | + Layer F (3 wirings, codspeed reverted to ubuntu) | 6 of 32 (19%) |
-| + Layer A landed in vnext (cargo SHIM auto-applies) | 6 of 32; standard cargo is out-of-the-box, with `scripts/cargo-ib.sh` retained only as an extension/toolchain bridge |
+| + Layer A landed in vnext (cargo SHIM auto-applies) | 6 of 32; standard cargo is out-of-the-box |
+| + Layer A2 landed in vnext (cargo extension/toolchain forms) | same job coverage; `scripts/cargo-ib.sh` removed |
 | + Layer B GREEN — manylinux Docker reachable (Phase 8 wires 1, then 8) | 14 of 32 (44%) |
 | + Layer E (cap bumped, lint/fuzz/test-python-coverage back on IB) | 17 of 32 (53%) |
 | + Layer G (macOS/Windows/aarch64 IB pools) | 27 of 32 (84%) |
