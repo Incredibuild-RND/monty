@@ -20,7 +20,7 @@ beneficiary and a known risk.
 | Ship `cargo` SHIM on the runner image (Layer A) | IB build-acceleration team | **Done** — vnext PR #210 merged and Tal deployed the image | Standard cargo subcommands are out-of-the-box | Every Rust workload on the JIT runner gets free `ib_console` build cache for normal cargo build/test/bench/check/clippy/run/install/rustc flows |
 | Ship cargo extension/toolchain coverage (Layer A2) | IB build-acceleration team | **Done** — [vnext PR #215](https://github.com/Incredibuild-RND/vnext-processing-engine/pull/215) merged, Build and Deploy passed, and `ib-probe` found the rebuilt runner shim | `scripts/cargo-ib.sh` is deleted; monty now uses bare `cargo llvm-cov`, `cargo codspeed build`, and `cargo +nightly miri test` | Makes Rust CI extension workloads out-of-the-box instead of requiring repo-local bridge wrappers |
 | Run `manylinux-probe` job in `ib-probe.yml` (Layer B) | us | **Done** — probe and cell H are green; first production Linux PGO wheel job is now wired through a GHA-level manylinux container on `incredibuild-runner` | Validates the path toward 8 more IB-cacheable wheel jobs | Every Python-wheel-building customer of IB unlocked simultaneously |
-| Upload `scripts/ib-profile.xml` to your tenant's hosted-grid IB settings (Layer C) | Sam + IB ops | 5 min via the IB grid UI | `scripts/ib-profile.xml` and the `IB_PROFILE` env wiring delete from monty; profile becomes centrally-tunable without re-merging | Sets the precedent that profile config lives at the tenant level, not per-repo |
+| Upload `scripts/ib-profile.xml` to the tenant's hosted-grid IB settings (Layer C) | project owner + IB ops | 5 min via the IB grid UI | `scripts/ib-profile.xml` and the `IB_PROFILE` env wiring delete from monty; profile becomes centrally-tunable without re-merging | Sets the precedent that profile config lives at the tenant level, not per-repo |
 | Bump `NAMESPACE_INSTANCE_DURATION_MINUTES` from ~12 to 30 on the Rust pool (Layer E) | IB ops | one Prefect/grid config edit | `lint` and `fuzz` jobs (currently forced to `ubuntu-latest` by the cap) move to IB; recovers a long-tail of CI time | Every Rust customer with > 12-min jobs |
 
 Layer A has shipped. The remaining high-leverage cleanup is Layer C:
@@ -305,7 +305,7 @@ plan) rather than an IB-product item.
 
 ---
 
-## What I need from Sam (concrete asks)
+## Remaining Owner Actions
 
 1. **Approve the cross-repo strategy.** Specifically: that the `cargo
    SHIM` lives upstream in vnext-processing-engine, not in monty.
@@ -317,7 +317,7 @@ plan) rather than an IB-product item.
    runner shim. The local `scripts/cargo-ib.sh` bridge is removed here.
 4. **Schedule a 30-min sync with IB ops** for Layer C (profile
    upload) + Layer E (cap bump). Both are config-only; one meeting.
-   Suggested attendees: Sam (monty), me, an IB ops engineer with
+   Suggested attendees: the monty project owner, the IB integration owner, and an IB ops engineer with
    write access to the hosted-grid tenant config and `Settings`
    pool config.
 5. **~~Triage Layer B's probe outcome.~~** ✅ Done — Layer B is GREEN

@@ -14,6 +14,10 @@ permissions:
 jobs:
   benchmarks:
     name: Run benchmarks
+    # The Incredibuild fork does not have CodSpeed project authorization,
+    # so this check would fail with 401 and obscure the IB validation.
+    # Keep production CodSpeed active in the upstream repo.
+    if: github.repository != 'Incredibuild-RND/monty'
     # Reverted from incredibuild-runner to ubuntu-latest after CI run
     # 25722680967 reproducibly failed with:
     #   setarch: failed to set personality to x86_64: Operation not permitted

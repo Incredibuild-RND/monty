@@ -7,7 +7,7 @@ gated on an external dependency; once that clears, the corresponding
 section here is a paint-by-numbers PR.
 
 The point of this doc is to remove "what does the cleanup look like?"
-from the critical path. When IB ops emails Sam saying "Layer C done"
+from the critical path. When IB ops confirms "Layer C done"
 or when a JIT runner image rebuild lands, the right person can open
 the cleanup PR in 10 minutes by following the diff below — they don't
 need to re-derive the change set.
@@ -461,7 +461,7 @@ Phases 5, 6, 7 (and optionally 8) all merged.
    post-phase numbers (replace the projected percentages with
    measured ones).
 3. Convert `IB_NEXT_STEPS_SAM.md` from an action-item document into a
-   roadmap-only document (delete the "What I need from Sam" section,
+   roadmap-only document (delete the "Remaining Owner Actions" section,
    keep Layer G).
 4. Delete this `IB_CLEANUP_SPEC.md` file — it has no further purpose
    once all phases land.

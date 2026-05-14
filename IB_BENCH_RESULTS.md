@@ -5,12 +5,12 @@ This document is the finish-line write-up of [PR #1](https://github.com/Incredib
 what was learned about the IB product when applied to a Rust workload,
 and exactly what is needed to close the loop on the remaining two cells.
 
-If you are reviewing this for the first time, read **TL;DR for Sam**, the
-**Results table**, and **What I need from you** — that is enough to act.
+If you are reviewing this for the first time, read **TL;DR**, the
+**Results table**, and **Remaining owner actions** — that is enough to act.
 
 ---
 
-## TL;DR for Sam
+## TL;DR
 
 **Current closure correction (2026-05-12)**: vnext PR #210 has shipped,
 so normal cargo subcommands (`build`, `test`, `bench`, `check`,
@@ -951,7 +951,7 @@ isolation we hit on the wheel-build matrix:
 |---|---|---|---|
 | **A — cargo SHIM upstream** | us → vnext PR | Promote cargo from ENV to SHIM in `default_rules.yaml`, regenerate `ib-accel/bin/cargo`, 6 new integration tests + 83 unit tests passing | **Shipped** — [vnext PR #210](https://github.com/Incredibuild-RND/vnext-processing-engine/pull/210) merged, Tal deployed the image, and [ib-probe run 25732897099](https://github.com/Incredibuild-RND/monty/actions/runs/25732897099) found `/ib-workspace/incredibuild/ib-accel/bin/cargo` |
 | **B — manylinux probe** | us → monty | Add `manylinux-probe` job to `ib-probe.yml` running `container: manylinux_2_28_x86_64` and probing `/ib-workspace`, `ib_console` resolution, glibc compat, `--standalone` smoke test | **GREEN** — [run 25726192172](https://github.com/Incredibuild-RND/monty/actions/runs/25726192172) confirms `/ib-workspace/cache` + `/ib-workspace/incredibuild` mounted, `/usr/bin/ib_console` v3.25.2 runs under glibc 2.28, `--standalone --no-monitor -- /bin/true` connects to `ib_server` |
-| **C — hosted-grid IB profile** | Sam + IB ops | Move `scripts/ib-profile.xml` content to tenant's hosted-grid IB settings (`IB_PROFILE_CONTENT` path in `vnext-processing-engine/src/runner_engine/flows.py:109-142`); delete `IB_PROFILE` env wiring from monty | Documented in `IB_NEXT_STEPS_SAM.md` (this PR) |
+| **C — hosted-grid IB profile** | project owner + IB ops | Move `scripts/ib-profile.xml` content to tenant's hosted-grid IB settings (`IB_PROFILE_CONTENT` path in `vnext-processing-engine/src/runner_engine/flows.py:109-142`); delete `IB_PROFILE` env wiring from monty | Documented in `IB_NEXT_STEPS_SAM.md` (this PR) |
 | **D — stable cache key** | us | Already correct: `cache_key = md5(tenant-repo-workflow-job)` is branch-agnostic by default. `override_cache_key` on the workflow_job exposed for cross-job sharing if we ever want `test-rust` + `bench-test` to share a target/ dir | Documented |
 | **E — wall-clock cap** | IB ops | Bump `NAMESPACE_INSTANCE_DURATION_MINUTES` from current value (~12) to 30 for the rust-heavy pool. Single config knob in vnext (`namespace_client.py:265`). Recovers `lint`, `fuzz`, and the `test-python` matrix that today must run on `ubuntu-latest` because of the cap | Action item for IB ops |
 | **F — three monty wirings** | us | `codspeed.yml::benchmarks`, `build-js x86_64-unknown-linux-gnu`, `build-js wasm32-wasip1-threads` switched to `incredibuild-runner` with conditional IB env injection | Committed on this branch |
