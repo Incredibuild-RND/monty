@@ -67,6 +67,7 @@ jobs:
           SKIP: no-commit-to-branch
 
   test-rust:
+    needs: [bench-test, test-python-coverage]
     runs-on: incredibuild-runner
     env:
       CARGO_HOME: ${{ github.workspace }}/.cargo
