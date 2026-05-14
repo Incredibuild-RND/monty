@@ -69,11 +69,6 @@ jobs:
   test-rust:
     needs: [bench-test, test-python-coverage]
     runs-on: incredibuild-runner
-    env:
-      CARGO_HOME: ${{ github.workspace }}/.cargo
-      CARGO_TARGET_DIR: ${{ github.workspace }}/target
-      IB_MAX_LOCAL_CORES: '4'
-      IB_PREVENT_OVERLOAD: '1'
 
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -100,18 +95,6 @@ jobs:
         uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
         with:
           python-version: '3.14'
-
-      - name: Configure IB console args
-        run: |
-          args="--standalone --build-cache-local-shared --build-cache-force --build-cache-basedir=$PWD --no-monitor --max-local-cores=$IB_MAX_LOCAL_CORES --prevent-initiator-overload"
-          for profile in /ib-workspace/cache/ib_profile.xml /ib-workspace/incredibuild/ib_profile.xml; do
-            if [ -f "$profile" ]; then
-              args="$args --profile=$profile"
-              break
-            fi
-          done
-          echo "IB_CONSOLE_ARGS=$args" >> "$GITHUB_ENV"
-          echo "IB_CONSOLE_ARGS=$args"
 
       - run: rustc --version --verbose
       - run: python3 -V
