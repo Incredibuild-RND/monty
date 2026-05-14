@@ -68,6 +68,9 @@ jobs:
 
   test-rust:
     runs-on: incredibuild-runner
+    env:
+      IB_MAX_LOCAL_CORES: '4'
+      IB_PREVENT_OVERLOAD: '1'
 
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
