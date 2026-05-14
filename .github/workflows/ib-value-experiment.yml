@@ -1,0 +1,223 @@
+name: IB Value Experiment
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  COLUMNS: 150
+  UV_PYTHON: '3.14'
+  UV_FROZEN: '1'
+  DEBUG: napi:*
+  LLVM_COV_IGNORE_FILENAME_REGEX: (tests/|test_cases/|/tests\.rs$$)
+
+jobs:
+  no-ib:
+    name: no IB, no GitHub rust-cache
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@efa25f7f19611383d5b0ccf2d1c8914531636bf9
+        with:
+          toolchain: stable
+          components: llvm-tools
+
+      - uses: taiki-e/install-action@1ed3272338f573e042a2e6bca3893aa19f43b47a # v2.71.3
+        with:
+          tool: cargo-llvm-cov
+
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: '3.14'
+
+      - name: Run full Rust coverage flow
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm .cargo/config.toml
+
+          csv="$RUNNER_TEMP/no_ib_timings.csv"
+          echo "phase,step,seconds" > "$csv"
+
+          run_timed() {
+            local label="$1"
+            local cmd="$2"
+            local start end
+            echo "::group::no-ib $label"
+            start=$(date +%s)
+            bash -lc "$cmd"
+            end=$(date +%s)
+            echo "::endgroup::"
+            echo "no-ib,$label,$((end - start))" | tee -a "$csv"
+          }
+
+          run_timed "clean" 'cargo llvm-cov clean --workspace'
+          run_timed "monty no features" 'cargo llvm-cov --no-report -p monty'
+          run_timed "datatest no features" 'cargo llvm-cov run --no-report -p monty-datatest'
+          run_timed "monty memory-model-checks" 'cargo llvm-cov --no-report -p monty --features memory-model-checks'
+          run_timed "datatest memory-model-checks" 'cargo llvm-cov run --no-report -p monty-datatest --features memory-model-checks'
+          run_timed "monty ref-count-return" 'cargo llvm-cov --no-report -p monty --features ref-count-return'
+          run_timed "datatest ref-count-return" 'cargo llvm-cov run --no-report -p monty-datatest --features ref-count-return'
+          run_timed "type-checking" 'cargo llvm-cov --no-report -p monty_type_checking -p monty_typeshed'
+          run_timed "report text" 'cargo llvm-cov report --ignore-filename-regex "$LLVM_COV_IGNORE_FILENAME_REGEX"'
+          run_timed "report codecov" 'cargo llvm-cov report --codecov --output-path=rust-coverage.json --ignore-filename-regex "$LLVM_COV_IGNORE_FILENAME_REGEX"'
+
+          total=$(awk -F, 'NR > 1 { sum += $3 } END { print sum + 0 }' "$csv")
+          {
+            echo "### no IB, no GitHub rust-cache"
+            echo ""
+            echo "| step | seconds |"
+            echo "|---|---:|"
+            awk -F, 'NR > 1 { printf "| %s | %s |\n", $2, $3 }' "$csv"
+            echo "| total | $total |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: ib-value-no-ib-timings
+          path: ${{ runner.temp }}/no_ib_timings.csv
+          if-no-files-found: error
+
+  ib:
+    name: IB cold and hot, no GitHub rust-cache
+    runs-on: incredibuild-runner
+    timeout-minutes: 60
+
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@efa25f7f19611383d5b0ccf2d1c8914531636bf9
+        with:
+          toolchain: stable
+          components: llvm-tools
+
+      - uses: taiki-e/install-action@1ed3272338f573e042a2e6bca3893aa19f43b47a # v2.71.3
+        with:
+          tool: cargo-llvm-cov
+
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: '3.14'
+
+      - name: Inject experiment IB profile
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > ib_profile.experiment.xml <<'XML'
+          <?xml version="1.0" encoding="UTF-8" ?>
+          <ib_profile version="1">
+            <globals ignore_following_profiles="false" />
+            <processes>
+              <process filename="cargo" type="intercepted" />
+              <process filename="rustc" type="allow_remote" exclude_args="--version:-vV:build_script_build:build_script_main">
+                <ib_cache enabled="true" />
+              </process>
+            </processes>
+          </ib_profile>
+          XML
+          echo "Injected profile:"
+          cat ib_profile.experiment.xml
+
+      - name: Run IB cold and hot full Rust coverage flow
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm .cargo/config.toml
+          sudo mkdir -p /etc/incredibuild/log
+          sudo chmod 1777 /etc/incredibuild/log
+
+          csv="$RUNNER_TEMP/ib_timings.csv"
+          echo "phase,step,seconds" > "$csv"
+
+          configure_ib() {
+            local phase="$1"
+            local log="/etc/incredibuild/log/ib_value_${phase}_${GITHUB_RUN_ID}_${GITHUB_RUN_ATTEMPT}.log"
+            rm -f "$log"
+            export IB_CACHE_LOG="$log"
+            export IB_CONSOLE_ARGS="--standalone --build-cache-local-shared --build-cache-force --build-cache-basedir=$PWD --build-cache-local-logfile=$log --build-cache-report-all-miss --no-monitor --max-local-cores=4 --prevent-initiator-overload --profile=$PWD/ib_profile.experiment.xml"
+            echo "IB_CONSOLE_ARGS=$IB_CONSOLE_ARGS"
+          }
+
+          summarize_ib() {
+            local phase="$1"
+            local log="$IB_CACHE_LOG"
+            local hits=0
+            local misses=0
+            if [ -f "$log" ]; then
+              hits=$(grep -c -E '^HIT[[:space:]]' "$log" 2>/dev/null || echo 0)
+              misses=$(grep -c -E '^MISS[[:space:]]' "$log" 2>/dev/null || echo 0)
+            fi
+            {
+              echo ""
+              echo "### IB cache log: $phase"
+              echo ""
+              echo "| metric | value |"
+              echo "|---|---:|"
+              echo "| HIT | $hits |"
+              echo "| MISS | $misses |"
+              echo "| log | \`$log\` |"
+            } >> "$GITHUB_STEP_SUMMARY"
+          }
+
+          run_timed() {
+            local phase="$1"
+            local label="$2"
+            local cmd="$3"
+            local start end
+            echo "::group::$phase $label"
+            start=$(date +%s)
+            bash -lc "$cmd"
+            end=$(date +%s)
+            echo "::endgroup::"
+            echo "$phase,$label,$((end - start))" | tee -a "$csv"
+          }
+
+          run_phase() {
+            local phase="$1"
+            configure_ib "$phase"
+            rm -rf target
+
+            run_timed "$phase" "clean" 'cargo llvm-cov clean --workspace'
+            run_timed "$phase" "monty no features" 'cargo llvm-cov --no-report -p monty'
+            run_timed "$phase" "datatest no features" 'cargo llvm-cov run --no-report -p monty-datatest'
+            run_timed "$phase" "monty memory-model-checks" 'cargo llvm-cov --no-report -p monty --features memory-model-checks'
+            run_timed "$phase" "datatest memory-model-checks" 'cargo llvm-cov run --no-report -p monty-datatest --features memory-model-checks'
+            run_timed "$phase" "monty ref-count-return" 'cargo llvm-cov --no-report -p monty --features ref-count-return'
+            run_timed "$phase" "datatest ref-count-return" 'cargo llvm-cov run --no-report -p monty-datatest --features ref-count-return'
+            run_timed "$phase" "type-checking" 'cargo llvm-cov --no-report -p monty_type_checking -p monty_typeshed'
+            run_timed "$phase" "report text" 'cargo llvm-cov report --ignore-filename-regex "$LLVM_COV_IGNORE_FILENAME_REGEX"'
+            run_timed "$phase" "report codecov" 'cargo llvm-cov report --codecov --output-path=rust-coverage.json --ignore-filename-regex "$LLVM_COV_IGNORE_FILENAME_REGEX"'
+
+            summarize_ib "$phase"
+          }
+
+          echo "::group::Clear local IB build cache for cold phase"
+          sudo rm -rf /etc/incredibuild/cache/build_cache/shared/* /etc/incredibuild/cache/build_cache/builds/* 2>/dev/null || true
+          echo "::endgroup::"
+
+          run_phase "ib-cold"
+          run_phase "ib-hot"
+
+          {
+            echo "### IB cold and hot, no GitHub rust-cache"
+            echo ""
+            echo "| phase | step | seconds |"
+            echo "|---|---|---:|"
+            awk -F, 'NR > 1 { printf "| %s | %s | %s |\n", $1, $2, $3 }' "$csv"
+            awk -F, 'NR > 1 { sum[$1] += $3 } END { for (phase in sum) printf "| %s | total | %s |\n", phase, sum[phase] }' "$csv"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: ib-value-ib-timings
+          path: ${{ runner.temp }}/ib_timings.csv
+          if-no-files-found: error
