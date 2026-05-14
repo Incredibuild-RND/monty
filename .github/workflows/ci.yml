@@ -98,6 +98,18 @@ jobs:
         with:
           python-version: '3.14'
 
+      - name: Configure IB console args
+        run: |
+          args="--standalone --build-cache-local-shared --build-cache-force --build-cache-basedir=$PWD --no-monitor --max-local-cores=$IB_MAX_LOCAL_CORES --prevent-initiator-overload"
+          for profile in /ib-workspace/cache/ib_profile.xml /ib-workspace/incredibuild/ib_profile.xml; do
+            if [ -f "$profile" ]; then
+              args="$args --profile=$profile"
+              break
+            fi
+          done
+          echo "IB_CONSOLE_ARGS=$args" >> "$GITHUB_ENV"
+          echo "IB_CONSOLE_ARGS=$args"
+
       - run: rustc --version --verbose
       - run: python3 -V
         # don't use .venv python in CI
