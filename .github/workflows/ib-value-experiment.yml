@@ -135,8 +135,17 @@ jobs:
         run: |
           set -euo pipefail
           rm .cargo/config.toml
-          sudo mkdir -p /etc/incredibuild/log
-          sudo chmod 1777 /etc/incredibuild/log
+
+          as_root() {
+            if command -v sudo >/dev/null 2>&1; then
+              sudo "$@"
+            else
+              "$@"
+            fi
+          }
+
+          as_root mkdir -p /etc/incredibuild/log
+          as_root chmod 1777 /etc/incredibuild/log
 
           csv="$RUNNER_TEMP/ib_timings.csv"
           echo "phase,step,seconds" > "$csv"
@@ -204,7 +213,7 @@ jobs:
           }
 
           echo "::group::Clear local IB build cache for cold phase"
-          sudo rm -rf /etc/incredibuild/cache/build_cache/shared/* /etc/incredibuild/cache/build_cache/builds/* 2>/dev/null || true
+          as_root rm -rf /etc/incredibuild/cache/build_cache/shared/* /etc/incredibuild/cache/build_cache/builds/* 2>/dev/null || true
           echo "::endgroup::"
 
           run_phase "ib-cold"
