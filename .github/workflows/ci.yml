@@ -69,6 +69,8 @@ jobs:
   test-rust:
     runs-on: incredibuild-runner
     env:
+      CARGO_HOME: ${{ github.workspace }}/.cargo
+      CARGO_TARGET_DIR: ${{ github.workspace }}/target
       IB_MAX_LOCAL_CORES: '4'
       IB_PREVENT_OVERLOAD: '1'
 
