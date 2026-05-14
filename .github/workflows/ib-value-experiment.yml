@@ -2,6 +2,9 @@ name: IB Value Experiment
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - ci/ib-value-experiment
 
 permissions:
   contents: read
