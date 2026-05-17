@@ -78,7 +78,7 @@ jobs:
               <process filename="python" type="intercepted" />
               <process filename="pytest" type="intercepted" />
               <process filename="^python[23](\.[0-9]+)?$" regex="true" type="intercepted" />
-              <process filename="rustc" type="allow_remote" exclude_args="--version:-vV:build_script_build:build_script_main">
+              <process filename="rustc" type="allow_remote" exclude_args="--version:-vV:--print:build_script_build:build_script_main">
                 <ib_cache enabled="true" />
               </process>
             </processes>
@@ -109,7 +109,7 @@ jobs:
               <process filename="^python[23](\.[0-9]+)?$" regex="true" type="allow_remote">
                 <ib_cache enabled="true" />
               </process>
-              <process filename="rustc" type="allow_remote" exclude_args="--version:-vV:build_script_build:build_script_main">
+              <process filename="rustc" type="allow_remote" exclude_args="--version:-vV:--print:build_script_build:build_script_main">
                 <ib_cache enabled="true" />
               </process>
             </processes>
@@ -210,6 +210,7 @@ jobs:
   rust-cache-prime:
     runs-on: incredibuild-runner
     needs: aggressive-cache
+    if: always()
 
     env:
       __IB_CARGO_WRAPPED: '1'
@@ -283,6 +284,7 @@ jobs:
   rust-cache-warm:
     runs-on: incredibuild-runner
     needs: rust-cache-prime
+    if: always()
 
     env:
       __IB_CARGO_WRAPPED: '1'
@@ -356,6 +358,7 @@ jobs:
   ib-rust-cache-only:
     runs-on: incredibuild-runner
     needs: rust-cache-warm
+    if: always()
 
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -400,7 +403,7 @@ jobs:
             <globals ignore_following_profiles="false" />
             <processes>
               <process filename="cargo" type="intercepted" />
-              <process filename="rustc" type="allow_remote" exclude_args="--version:-vV:build_script_build:build_script_main">
+              <process filename="rustc" type="allow_remote" exclude_args="--version:-vV:--print:build_script_build:build_script_main">
                 <ib_cache enabled="true" />
               </process>
             </processes>
