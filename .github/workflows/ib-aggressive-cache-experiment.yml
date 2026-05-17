@@ -200,3 +200,282 @@ jobs:
             awk -F, 'NR > 1 { printf "| %s | %s | %s |\n", $1, $2, $3 }' "$RUNNER_TEMP/ib_aggressive_timings.csv"
             awk -F, 'NR > 1 { sum[$1] += $3 } END { for (phase in sum) printf "| %s | total | %s |\n", phase, sum[phase] }' "$RUNNER_TEMP/ib_aggressive_timings.csv"
           } >> "$GITHUB_STEP_SUMMARY"
+
+  rust-cache-prime:
+    runs-on: incredibuild-runner
+
+    env:
+      __IB_CARGO_WRAPPED: '1'
+
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@efa25f7f19611383d5b0ccf2d1c8914531636bf9
+        with:
+          toolchain: stable
+          components: llvm-tools
+
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          shared-key: ib-rust-cache-comparison
+          lookup-only: false
+          cache-on-failure: true
+
+      - uses: taiki-e/install-action@1ed3272338f573e042a2e6bca3893aa19f43b47a # v2.71.3
+        with:
+          tool: cargo-llvm-cov
+
+      - name: set up python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: '3.14'
+
+      - name: Prime GitHub rust-cache without IB wrapping
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f .cargo/config.toml
+          csv="$RUNNER_TEMP/rust_cache_prime_timings.csv"
+          echo "phase,step,seconds" > "$csv"
+
+          run_timed() {
+            local label="$1"
+            shift
+            local start end
+            echo "::group::rust-cache-prime $label"
+            start=$(date +%s)
+            "$@"
+            end=$(date +%s)
+            echo "::endgroup::"
+            echo "rust-cache-prime,$label,$((end - start))" | tee -a "$csv"
+          }
+
+          run_timed "clean" cargo llvm-cov clean --workspace
+          run_timed "monty no features" cargo llvm-cov --no-report -p monty
+          run_timed "datatest no features" cargo llvm-cov run --no-report -p monty-datatest
+          run_timed "monty memory-model-checks" cargo llvm-cov --no-report -p monty --features memory-model-checks
+          run_timed "datatest memory-model-checks" cargo llvm-cov run --no-report -p monty-datatest --features memory-model-checks
+          run_timed "monty ref-count-return" cargo llvm-cov --no-report -p monty --features ref-count-return
+          run_timed "datatest ref-count-return" cargo llvm-cov run --no-report -p monty-datatest --features ref-count-return
+          run_timed "type-checking" cargo llvm-cov --no-report -p monty_type_checking -p monty_typeshed
+          run_timed "report text" cargo llvm-cov report --ignore-filename-regex "$LLVM_COV_IGNORE_FILENAME_REGEX"
+          run_timed "report codecov" cargo llvm-cov report --codecov --output-path=rust-coverage.json --ignore-filename-regex "$LLVM_COV_IGNORE_FILENAME_REGEX"
+
+          {
+            echo "### GitHub rust-cache prime, IB cargo shim bypassed"
+            echo ""
+            echo "| phase | step | seconds |"
+            echo "|---|---|---:|"
+            awk -F, 'NR > 1 { printf "| %s | %s | %s |\n", $1, $2, $3 }' "$csv"
+            awk -F, 'NR > 1 { sum[$1] += $3 } END { for (phase in sum) printf "| %s | total | %s |\n", phase, sum[phase] }' "$csv"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  rust-cache-warm:
+    runs-on: incredibuild-runner
+    needs: rust-cache-prime
+
+    env:
+      __IB_CARGO_WRAPPED: '1'
+
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@efa25f7f19611383d5b0ccf2d1c8914531636bf9
+        with:
+          toolchain: stable
+          components: llvm-tools
+
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          shared-key: ib-rust-cache-comparison
+          lookup-only: false
+          cache-on-failure: true
+
+      - uses: taiki-e/install-action@1ed3272338f573e042a2e6bca3893aa19f43b47a # v2.71.3
+        with:
+          tool: cargo-llvm-cov
+
+      - name: set up python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: '3.14'
+
+      - name: Measure warm GitHub rust-cache without IB wrapping
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f .cargo/config.toml
+          csv="$RUNNER_TEMP/rust_cache_warm_timings.csv"
+          echo "phase,step,seconds" > "$csv"
+
+          run_timed() {
+            local label="$1"
+            shift
+            local start end
+            echo "::group::rust-cache-warm $label"
+            start=$(date +%s)
+            "$@"
+            end=$(date +%s)
+            echo "::endgroup::"
+            echo "rust-cache-warm,$label,$((end - start))" | tee -a "$csv"
+          }
+
+          run_timed "clean" cargo llvm-cov clean --workspace
+          run_timed "monty no features" cargo llvm-cov --no-report -p monty
+          run_timed "datatest no features" cargo llvm-cov run --no-report -p monty-datatest
+          run_timed "monty memory-model-checks" cargo llvm-cov --no-report -p monty --features memory-model-checks
+          run_timed "datatest memory-model-checks" cargo llvm-cov run --no-report -p monty-datatest --features memory-model-checks
+          run_timed "monty ref-count-return" cargo llvm-cov --no-report -p monty --features ref-count-return
+          run_timed "datatest ref-count-return" cargo llvm-cov run --no-report -p monty-datatest --features ref-count-return
+          run_timed "type-checking" cargo llvm-cov --no-report -p monty_type_checking -p monty_typeshed
+          run_timed "report text" cargo llvm-cov report --ignore-filename-regex "$LLVM_COV_IGNORE_FILENAME_REGEX"
+          run_timed "report codecov" cargo llvm-cov report --codecov --output-path=rust-coverage.json --ignore-filename-regex "$LLVM_COV_IGNORE_FILENAME_REGEX"
+
+          {
+            echo "### GitHub rust-cache warm, IB cargo shim bypassed"
+            echo ""
+            echo "| phase | step | seconds |"
+            echo "|---|---|---:|"
+            awk -F, 'NR > 1 { printf "| %s | %s | %s |\n", $1, $2, $3 }' "$csv"
+            awk -F, 'NR > 1 { sum[$1] += $3 } END { for (phase in sum) printf "| %s | total | %s |\n", phase, sum[phase] }' "$csv"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  ib-rust-cache-only:
+    runs-on: incredibuild-runner
+
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@efa25f7f19611383d5b0ccf2d1c8914531636bf9
+        with:
+          toolchain: stable
+          components: llvm-tools
+
+      - uses: taiki-e/install-action@1ed3272338f573e042a2e6bca3893aa19f43b47a # v2.71.3
+        with:
+          tool: cargo-llvm-cov
+
+      - name: set up python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: '3.14'
+
+      - name: Measure IB rustc cache without GitHub rust-cache
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f .cargo/config.toml
+
+          as_root() {
+            if command -v sudo >/dev/null 2>&1; then
+              sudo "$@"
+            else
+              "$@"
+            fi
+          }
+
+          as_root mkdir -p /etc/incredibuild/log
+          as_root chmod 1777 /etc/incredibuild/log
+
+          cat > "$RUNNER_TEMP/ib_profile_rust_only.xml" <<'XML'
+          <?xml version="1.0" encoding="UTF-8" ?>
+          <ib_profile version="1">
+            <globals ignore_following_profiles="false" />
+            <processes>
+              <process filename="cargo" type="intercepted" />
+              <process filename="rustc" type="allow_remote" exclude_args="--version:-vV:build_script_build:build_script_main">
+                <ib_cache enabled="true" />
+              </process>
+            </processes>
+          </ib_profile>
+          XML
+
+          common_ib_args() {
+            local log="$1"
+            echo \
+              --standalone \
+              --build-cache-local-shared \
+              --build-cache-force \
+              --build-cache-basedir="$PWD" \
+              --build-cache-local-logfile="$log" \
+              --build-cache-report-all-miss \
+              --no-monitor \
+              --profile="$RUNNER_TEMP/ib_profile_rust_only.xml"
+          }
+
+          run_ib_timed() {
+            local phase="$1"
+            local label="$2"
+            shift 2
+            local start end
+            echo "::group::$phase $label"
+            start=$(date +%s)
+            __IB_CARGO_WRAPPED=1 /usr/bin/ib_console $(common_ib_args "$IB_CACHE_LOG") "$@"
+            end=$(date +%s)
+            echo "::endgroup::"
+            echo "$phase,$label,$((end - start))" | tee -a "$RUNNER_TEMP/ib_rust_only_timings.csv"
+          }
+
+          summarize_log() {
+            local phase="$1"
+            local hits=0 misses=0
+            if [ -f "$IB_CACHE_LOG" ]; then
+              hits=$(grep -c -E '^HIT[[:space:]]' "$IB_CACHE_LOG" 2>/dev/null || true)
+              misses=$(grep -c -E '^MISS[[:space:]]' "$IB_CACHE_LOG" 2>/dev/null || true)
+            fi
+            {
+              echo ""
+              echo "### $phase IB rustc cache log"
+              echo ""
+              echo "| metric | value |"
+              echo "|---|---:|"
+              echo "| HIT | $hits |"
+              echo "| MISS | $misses |"
+              echo "| log | \`$IB_CACHE_LOG\` |"
+            } >> "$GITHUB_STEP_SUMMARY"
+          }
+
+          run_phase() {
+            local phase="$1"
+            export IB_CACHE_LOG="/etc/incredibuild/log/ib_rust_only_${phase}_${GITHUB_RUN_ID}_${GITHUB_RUN_ATTEMPT}.log"
+            rm -f "$IB_CACHE_LOG"
+            rm -rf target
+
+            cargo llvm-cov clean --workspace
+            run_ib_timed "$phase" "monty no features" cargo llvm-cov --no-report -p monty
+            run_ib_timed "$phase" "datatest no features" cargo llvm-cov run --no-report -p monty-datatest
+            run_ib_timed "$phase" "monty memory-model-checks" cargo llvm-cov --no-report -p monty --features memory-model-checks
+            run_ib_timed "$phase" "datatest memory-model-checks" cargo llvm-cov run --no-report -p monty-datatest --features memory-model-checks
+            run_ib_timed "$phase" "monty ref-count-return" cargo llvm-cov --no-report -p monty --features ref-count-return
+            run_ib_timed "$phase" "datatest ref-count-return" cargo llvm-cov run --no-report -p monty-datatest --features ref-count-return
+            run_ib_timed "$phase" "type-checking" cargo llvm-cov --no-report -p monty_type_checking -p monty_typeshed
+            run_ib_timed "$phase" "report text" cargo llvm-cov report --ignore-filename-regex "$LLVM_COV_IGNORE_FILENAME_REGEX"
+            run_ib_timed "$phase" "report codecov" cargo llvm-cov report --codecov --output-path=rust-coverage.json --ignore-filename-regex "$LLVM_COV_IGNORE_FILENAME_REGEX"
+
+            summarize_log "$phase"
+          }
+
+          echo "phase,step,seconds" > "$RUNNER_TEMP/ib_rust_only_timings.csv"
+
+          echo "::group::Clear local IB build cache for cold phase"
+          as_root rm -rf /etc/incredibuild/cache/build_cache/shared/* /etc/incredibuild/cache/build_cache/builds/* 2>/dev/null || true
+          echo "::endgroup::"
+
+          run_phase "ib-rust-cold"
+          run_phase "ib-rust-hot"
+
+          {
+            echo ""
+            echo "### IB rustc cache only, no GitHub rust-cache"
+            echo ""
+            echo "| phase | step | seconds |"
+            echo "|---|---|---:|"
+            awk -F, 'NR > 1 { printf "| %s | %s | %s |\n", $1, $2, $3 }' "$RUNNER_TEMP/ib_rust_only_timings.csv"
+            awk -F, 'NR > 1 { sum[$1] += $3 } END { for (phase in sum) printf "| %s | total | %s |\n", phase, sum[phase] }' "$RUNNER_TEMP/ib_rust_only_timings.csv"
+          } >> "$GITHUB_STEP_SUMMARY"
