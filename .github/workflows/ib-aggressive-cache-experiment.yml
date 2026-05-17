@@ -8,6 +8,10 @@ on:
 
 permissions: {}
 
+concurrency:
+  group: ib-aggressive-cache-experiment
+  cancel-in-progress: true
+
 env:
   COLUMNS: 150
   UV_PYTHON: '3.14'
@@ -46,6 +50,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+
+          ulimit -S -n 10000 || true
 
           rm -f .cargo/config.toml
 
@@ -131,7 +137,7 @@ jobs:
             local start end
             echo "::group::$phase $label"
             start=$(date +%s)
-            /usr/bin/ib_console $(common_ib_args "$IB_PROFILE_UNDER_TEST" "$IB_CACHE_LOG") "$@"
+            __IB_CARGO_WRAPPED=1 /usr/bin/ib_console $(common_ib_args "$IB_PROFILE_UNDER_TEST" "$IB_CACHE_LOG") "$@"
             end=$(date +%s)
             echo "::endgroup::"
             echo "$phase,$label,$((end - start))" | tee -a "$RUNNER_TEMP/ib_aggressive_timings.csv"
@@ -203,6 +209,7 @@ jobs:
 
   rust-cache-prime:
     runs-on: incredibuild-runner
+    needs: aggressive-cache
 
     env:
       __IB_CARGO_WRAPPED: '1'
@@ -236,6 +243,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          ulimit -S -n 10000 || true
           rm -f .cargo/config.toml
           csv="$RUNNER_TEMP/rust_cache_prime_timings.csv"
           echo "phase,step,seconds" > "$csv"
@@ -308,6 +316,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          ulimit -S -n 10000 || true
           rm -f .cargo/config.toml
           csv="$RUNNER_TEMP/rust_cache_warm_timings.csv"
           echo "phase,step,seconds" > "$csv"
@@ -346,6 +355,7 @@ jobs:
 
   ib-rust-cache-only:
     runs-on: incredibuild-runner
+    needs: rust-cache-warm
 
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -370,6 +380,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          ulimit -S -n 10000 || true
           rm -f .cargo/config.toml
 
           as_root() {
